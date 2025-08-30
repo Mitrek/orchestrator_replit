@@ -28,8 +28,8 @@ const apiLimiter = rateLimit({
     if (apiKey) {
       return apiKey;
     }
-    // Use default IP handling for IPv6 compatibility
-    return req.ip;
+    // Use express-rate-limit's default IP handling for IPv6 compatibility
+    return undefined; // Let express-rate-limit handle IP extraction
   }
 });
 

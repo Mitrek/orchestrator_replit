@@ -10,25 +10,35 @@ interface ApiKeyCardProps {
   onRegenerate?: (id: string) => void;
   usageCount?: number;
   usagePercentage?: number;
+  fullKey?: string; // Optional full key (only available right after creation)
 }
 
 export function ApiKeyCard({ 
   apiKey, 
   onRegenerate, 
   usageCount = 0, 
-  usagePercentage = 0 
+  usagePercentage = 0,
+  fullKey
 }: ApiKeyCardProps) {
   const { toast } = useToast();
 
   const handleCopy = () => {
-    // Note: We can only copy the prefix since the full key is only shown once during creation
-    const maskedKey = `${apiKey.keyPrefix}••••••••••••••••••••••••••••`;
-    navigator.clipboard.writeText(maskedKey);
-    toast({
-      title: "Masked Key Copied",
-      description: "The masked API key prefix has been copied. Full keys are only shown during creation.",
-      variant: "default",
-    });
+    if (fullKey) {
+      navigator.clipboard.writeText(fullKey);
+      toast({
+        title: "Full API Key Copied",
+        description: "The complete API key has been copied to your clipboard.",
+        variant: "default",
+      });
+    } else {
+      const maskedKey = `${apiKey.keyPrefix}••••••••••••••••••••••••••••`;
+      navigator.clipboard.writeText(maskedKey);
+      toast({
+        title: "Masked Key Copied",
+        description: "Only the masked prefix is available. Full keys are only shown during creation.",
+        variant: "default",
+      });
+    }
   };
 
   const handleRegenerate = () => {
@@ -75,7 +85,7 @@ export function ApiKeyCard({
             className="flex-1 px-3 py-2 bg-muted rounded font-mono text-sm text-muted-foreground"
             data-testid={`api-key-value-${apiKey.id}`}
           >
-            {apiKey.keyPrefix}••••••••••••••••••••••••••••
+            {fullKey || `${apiKey.keyPrefix}••••••••••••••••••••••••••••`}
           </code>
           <Button 
             variant="ghost" 

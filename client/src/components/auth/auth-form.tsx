@@ -83,7 +83,8 @@ export function AuthForm({ mode, onSuccess, onModeChange }: AuthFormProps) {
       // Redirect after a brief delay
       setTimeout(() => {
         console.log("Redirecting to dashboard...");
-        onSuccess();
+        // Force page reload to re-check authentication state
+        window.location.href = "/";
       }, 2000);
       
     } catch (error: any) {

@@ -71,11 +71,15 @@ export function AuthForm({ mode, onSuccess, onModeChange }: AuthFormProps) {
     setIsLoading(true);
     try {
       await register(data);
+      registerForm.reset(); // Clear the form immediately
       toast({
-        title: "Registration successful",
-        description: "Welcome to Ai-lure Orchestrator!",
+        title: "Welcome to Ai-lure Orchestrator!",
+        description: "Your account has been created successfully. Taking you to your dashboard...",
       });
-      onSuccess();
+      // Redirect immediately - modern UX pattern
+      setTimeout(() => {
+        onSuccess();
+      }, 1500); // Brief delay to show success message
     } catch (error: any) {
       toast({
         title: "Registration failed",

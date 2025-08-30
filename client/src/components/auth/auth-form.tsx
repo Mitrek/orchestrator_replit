@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -40,6 +40,12 @@ export function AuthForm({ mode, onSuccess, onModeChange }: AuthFormProps) {
       lastName: "",
     },
   });
+
+  // Reset forms when mode changes
+  useEffect(() => {
+    loginForm.reset();
+    registerForm.reset();
+  }, [mode, loginForm, registerForm]);
 
   const handleLogin = async (data: LoginRequest) => {
     setIsLoading(true);

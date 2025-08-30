@@ -1,0 +1,78 @@
+ rest-express@1.0.0 dev
+> NODE_ENV=development tsx server/index.ts
+
+ValidationError: Custom keyGenerator appears to use request IP without calling the ipKeyGenerator helper function for IPv6 addresses. This could allow IPv6 users to bypass limits. See https://express-rate-limit.github.io/ERR_ERL_KEY_GEN_IPV6/ for more information.
+    at Object.keyGeneratorIpFallback (file:///home/runner/workspace/node_modules/express-rate-limit/dist/index.mjs:549:13)
+    at wrappedValidations.<computed> [as keyGeneratorIpFallback] (file:///home/runner/workspace/node_modules/express-rate-limit/dist/index.mjs:577:22)
+    at parseOptions (file:///home/runner/workspace/node_modules/express-rate-limit/dist/index.mjs:646:16)
+    at rateLimit (file:///home/runner/workspace/node_modules/express-rate-limit/dist/index.mjs:724:18)
+    at <anonymous> (/home/runner/workspace/server/routes.ts:20:20)
+    at ModuleJob.run (node:internal/modules/esm/module_job:263:25)
+    at async ModuleLoader.import (node:internal/modules/esm/loader:540:24)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5) {
+  code: 'ERR_ERL_KEY_GEN_IPV6',
+  help: 'https://express-rate-limit.github.io/ERR_ERL_KEY_GEN_IPV6/'
+}
+10:41:14 PM [express] serving on port 5000
+Browserslist: browsers data (caniuse-lite) is 10 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+10:41:22 PM [express] GET /api/user/profile 304 in 909ms :: {"id":"c5f5d84b-6cb5-4564-9ee9-b4aaf30849…
+10:41:22 PM [express] GET /api/dashboard/stats 200 in 137ms :: {"activeKeys":1,"totalRequests":0,"avg…
+10:41:22 PM [express] GET /api/api-keys 304 in 268ms :: [{"id":"37e356c8-7fb3-485d-a49a-bdd274cd2c01"…
+10:41:23 PM [express] GET /api/request-logs 304 in 545ms :: []
+10:41:58 PM [express] POST /api/api-keys 200 in 481ms :: {"id":"4e272dd0-1adc-479d-bf7b-46e4b614c2bc"…
+10:41:58 PM [express] GET /api/api-keys 200 in 60ms :: [{"id":"4e272dd0-1adc-479d-bf7b-46e4b614c2bc",…
+10:42:07 PM [express] GET /api/integrations 304 in 63ms :: []
+10:45:50 PM [vite] hmr update /src/pages/dashboard.tsx, /src/index.css?v=9QxguhYuVv6hody-d5iRT
+10:45:51 PM [vite] hmr update /src/components/dashboard/api-key-card.tsx, /src/index.css?v=9QxguhYuVv6hody-d5iRT
+10:45:51 PM [vite] Internal server error: /home/runner/workspace/client/src/pages/dashboard.tsx: Missing semicolon. (424:20)
+
+  422 |           <StatsCard
+  423 |             title="Avg Response Time"
+> 424 |             value={`${stats?.avgResponseTime || 0}ms`}
+      |                     ^
+  425 |             description="Avg Response Time"
+  426 |             icon={Clock}
+  427 |             change="-3ms"
+  Plugin: vite:react-babel
+  File: /home/runner/workspace/client/src/pages/dashboard.tsx:424:20
+  422|            <StatsCard
+  423|              title="Avg Response Time"
+  424|              value={`${stats?.avgResponseTime || 0}ms`}
+     |                      ^
+  425|              description="Avg Response Time"
+  426|              icon={Clock}
+      at toParseError (/home/runner/workspace/node_modules/@babel/parser/src/parse-error.ts:95:45)
+      at raise (/home/runner/workspace/node_modules/@babel/parser/src/tokenizer/index.ts:1497:19)
+      at semicolon (/home/runner/workspace/node_modules/@babel/parser/src/parser/util.ts:149:10)
+      at parseExpressionStatement (/home/runner/workspace/node_modules/@babel/parser/src/parser/statement.ts:1339:10)
+      at parseExpressionStatement (/home/runner/workspace/node_modules/@babel/parser/src/plugins/typescript/index.ts:3211:28)
+      at parseStatementContent (/home/runner/workspace/node_modules/@babel/parser/src/parser/statement.ts:673:19)
+      at parseStatementContent (/home/runner/workspace/node_modules/@babel/parser/src/plugins/typescript/index.ts:3056:20)
+      at parseStatementLike (/home/runner/workspace/node_modules/@babel/parser/src/parser/statement.ts:437:17)
+      at parseModuleItem (/home/runner/workspace/node_modules/@babel/parser/src/parser/statement.ts:374:17)
+      at parseBlockOrModuleBlockBody (/home/runner/workspace/node_modules/@babel/parser/src/parser/statement.ts:1419:16)
+      at parseBlockBody (/home/runner/workspace/node_modules/@babel/parser/src/parser/statement.ts:1393:10)
+      at parseProgram (/home/runner/workspace/node_modules/@babel/parser/src/parser/statement.ts:225:10)
+      at parseTopLevel (/home/runner/workspace/node_modules/@babel/parser/src/parser/statement.ts:203:25)
+      at parse (/home/runner/workspace/node_modules/@babel/parser/src/parser/index.ts:90:10)
+      at parse (/home/runner/workspace/node_modules/@babel/parser/src/plugins/typescript/index.ts:4192:20)
+      at parse (/home/runner/workspace/node_modules/@babel/parser/src/index.ts:92:38)
+      at parser (/home/runner/workspace/node_modules/@babel/core/src/parser/index.ts:28:19)
+      at parser.next (<anonymous>)
+      at normalizeFile (/home/runner/workspace/node_modules/@babel/core/src/transformation/normalize-file.ts:50:24)
+      at normalizeFile.next (<anonymous>)
+      at run (/home/runner/workspace/node_modules/@babel/core/src/transformation/index.ts:40:36)
+      at run.next (<anonymous>)
+      at transform (/home/runner/workspace/node_modules/@babel/core/src/transform.ts:29:20)
+      at transform.next (<anonymous>)
+      at step (/home/runner/workspace/node_modules/gensync/index.js:261:32)
+      at /home/runner/workspace/node_modules/gensync/index.js:273:13
+      at async.call.result.err.err (/home/runner/workspace/node_modules/gensync/index.js:223:11)
+      at /home/runner/workspace/node_modules/gensync/index.js:189:28
+      at <anonymous> (/home/runner/workspace/node_modules/@babel/core/src/gensync-utils/async.ts:90:7)
+      at /home/runner/workspace/node_modules/gensync/index.js:113:33
+      at step (/home/runner/workspace/node_modules/gensync/index.js:287:14)
+      at /home/runner/workspace/node_modules/gensync/index.js:273:13
+      at async.call.result.err.err (/home/runner/workspace/node_modules/gensync/index.js:223:11)

@@ -113,6 +113,8 @@ export const loginSchema = z.object({
 
 export const registerSchema = insertUserSchema.extend({
   confirmPassword: z.string(),
+  firstName: z.string().optional(),
+  lastName: z.string().optional(),
 }).refine((data) => data.password === data.confirmPassword, {
   message: "Passwords don't match",
   path: ["confirmPassword"],

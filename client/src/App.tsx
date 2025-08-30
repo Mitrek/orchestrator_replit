@@ -13,6 +13,7 @@ import Dashboard from "@/pages/dashboard";
 import ApiKeys from "@/pages/api-keys";
 import Integrations from "@/pages/integrations";
 import Analytics from "@/pages/analytics";
+import ApiKeysPage from "./pages/ApiKeysPage";
 
 function Router() {
   const [user, setUser] = useState<User | null>(null);
@@ -78,6 +79,11 @@ function App() {
       </TooltipProvider>
     </QueryClientProvider>
   );
+}
+
+
+export default function App() {
+  return <ApiKeysPage />;
 }
 
 export default App;

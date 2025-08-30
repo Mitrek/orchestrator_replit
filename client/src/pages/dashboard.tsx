@@ -6,7 +6,7 @@ import { ActivityFeed } from "@/components/dashboard/activity-feed";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { User, ApiKey, RequestLog } from "@shared/schema";
-import { Key, Activity, Clock, AlertTriangle, Plus, Download, Book, Plug } from "lucide-react";
+import { Key, Activity, Clock, AlertTriangle, Plus, Download, Book, Plug, Play } from "lucide-react";
 import { getAuthToken } from "@/lib/auth";
 
 interface DashboardStats {

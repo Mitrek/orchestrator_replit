@@ -70,9 +70,7 @@ export function AuthForm({ mode, onSuccess, onModeChange }: AuthFormProps) {
   const handleRegister = async (data: RegisterRequest) => {
     setIsLoading(true);
     try {
-      console.log("Starting registration...");
-      const result = await register(data);
-      console.log("Registration successful:", result);
+      await register(data);
       
       registerForm.reset(); // Clear the form immediately
       toast({
@@ -82,13 +80,11 @@ export function AuthForm({ mode, onSuccess, onModeChange }: AuthFormProps) {
       
       // Redirect after a brief delay
       setTimeout(() => {
-        console.log("Redirecting to dashboard...");
         // Force page reload to re-check authentication state
         window.location.href = "/";
       }, 2000);
       
     } catch (error: any) {
-      console.error("Registration failed:", error);
       toast({
         title: "Registration failed",
         description: error.message,

@@ -23,14 +23,7 @@ const apiLimiter = rateLimit({
   message: { error: "Rate limit exceeded" },
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => {
-    const apiKey = req.headers['x-api-key'] as string;
-    if (apiKey) {
-      return apiKey;
-    }
-    // Use express-rate-limit's default IP handling for IPv6 compatibility
-    return undefined; // Let express-rate-limit handle IP extraction
-  }
+  // Remove custom keyGenerator to use default IP handling
 });
 
 // Middleware to authenticate API keys

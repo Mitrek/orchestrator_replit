@@ -81,9 +81,4 @@ function App() {
   );
 }
 
-
-export default function App() {
-  return <ApiKeysPage />;
-}
-
 export default App;

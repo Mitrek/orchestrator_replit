@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import { db } from "../db";
-import { apiKeys } from "../db/schema";
+import { apiKeys } from "@shared/schema";
 
 function genKey(prefix = "ai_lure") {
   const keyPrefix = crypto.randomBytes(4).toString("hex");     // 8 chars

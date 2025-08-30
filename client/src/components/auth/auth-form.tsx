@@ -198,7 +198,10 @@ export function AuthForm({ mode, onSuccess, onModeChange }: AuthFormProps) {
                       <FormControl>
                         <Input 
                           placeholder="Choose a username" 
-                          {...field} 
+                          value={field.value || ""}
+                          onChange={field.onChange}
+                          onBlur={field.onBlur}
+                          name={field.name}
                           data-testid="input-username"
                         />
                       </FormControl>

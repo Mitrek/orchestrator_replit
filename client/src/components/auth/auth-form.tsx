@@ -195,26 +195,21 @@ export function AuthForm({ mode, onSuccess, onModeChange }: AuthFormProps) {
                     )}
                   />
                 </div>
-                <FormField
-                  control={registerForm.control}
-                  name="username"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Username</FormLabel>
-                      <FormControl>
-                        <Input 
-                          placeholder="Choose a username" 
-                          value={field.value || ""}
-                          onChange={field.onChange}
-                          onBlur={field.onBlur}
-                          name={field.name}
-                          data-testid="input-username"
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
+                <div>
+                  <label className="text-sm font-medium text-foreground">Username</label>
+                  <Input 
+                    placeholder="Choose a username" 
+                    value={registerForm.watch("username") || ""}
+                    onChange={(e) => registerForm.setValue("username", e.target.value)}
+                    data-testid="input-username"
+                    className="mt-1"
+                  />
+                  {registerForm.formState.errors.username && (
+                    <p className="text-sm text-red-600 mt-1">
+                      {registerForm.formState.errors.username.message}
+                    </p>
                   )}
-                />
+                </div>
                 <FormField
                   control={registerForm.control}
                   name="email"

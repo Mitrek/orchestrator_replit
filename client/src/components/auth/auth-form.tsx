@@ -70,17 +70,24 @@ export function AuthForm({ mode, onSuccess, onModeChange }: AuthFormProps) {
   const handleRegister = async (data: RegisterRequest) => {
     setIsLoading(true);
     try {
-      await register(data);
+      console.log("Starting registration...");
+      const result = await register(data);
+      console.log("Registration successful:", result);
+      
       registerForm.reset(); // Clear the form immediately
       toast({
         title: "Welcome to Ai-lure Orchestrator!",
         description: "Your account has been created successfully. Taking you to your dashboard...",
       });
-      // Redirect immediately - modern UX pattern
+      
+      // Redirect after a brief delay
       setTimeout(() => {
+        console.log("Redirecting to dashboard...");
         onSuccess();
-      }, 1500); // Brief delay to show success message
+      }, 2000);
+      
     } catch (error: any) {
+      console.error("Registration failed:", error);
       toast({
         title: "Registration failed",
         description: error.message,

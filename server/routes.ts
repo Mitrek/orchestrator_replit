@@ -24,7 +24,12 @@ const apiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => {
-    return req.headers['x-api-key'] as string || req.ip;
+    const apiKey = req.headers['x-api-key'] as string;
+    if (apiKey) {
+      return apiKey;
+    }
+    // Use default IP handling for IPv6 compatibility
+    return req.ip;
   }
 });
 
@@ -37,18 +42,26 @@ async function authenticateApiKey(req: any, res: any, next: any) {
   }
 
   try {
-    const keyHash = crypto.createHash('sha256').update(apiKey).digest('hex');
-    const key = await storage.getApiKeyByHash(keyHash);
+    // Get all API keys and check against bcrypt hash
+    const allKeys = await storage.getAllApiKeys();
+    let matchedKey = null;
     
-    if (!key || !key.isActive) {
+    for (const key of allKeys) {
+      if (key.isActive && await bcrypt.compare(apiKey, key.keyHash)) {
+        matchedKey = key;
+        break;
+      }
+    }
+    
+    if (!matchedKey) {
       return res.status(401).json({ error: "Invalid or inactive API key" });
     }
 
     // Update last used time
-    await storage.updateApiKey(key.id, { lastUsedAt: new Date() });
+    await storage.updateApiKey(matchedKey.id, { lastUsedAt: new Date() });
     
-    req.apiKey = key;
-    req.userId = key.userId;
+    req.apiKey = matchedKey;
+    req.userId = matchedKey.userId;
     next();
   } catch (error) {
     return res.status(500).json({ error: "Authentication failed" });
@@ -188,16 +201,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         userId: req.user.userId,
       });
 
-      // Generate API key
-      const keyBytes = crypto.randomBytes(32).toString('hex');
-      const apiKeyString = `ai_lure_${keyBytes}`;
-      const keyHash = crypto.createHash('sha256').update(apiKeyString).digest('hex');
-      const keyPrefix = apiKeyString.substring(0, 16);
+      // Generate API key using the same format as the other route
+      const keyPrefix = crypto.randomBytes(4).toString("hex");     // 8 chars
+      const body = crypto.randomBytes(24).toString("base64url");   // ~32 url-safe
+      const apiKeyString = `ai_lure_${keyPrefix}_${body}`;
+      const keyHash = await bcrypt.hash(apiKeyString, 12);
+      const displayPrefix = `ai_lure_${keyPrefix}`;
 
       const apiKey = await storage.createApiKey({
         ...validatedData,
         keyHash,
-        keyPrefix,
+        keyPrefix: displayPrefix,
       });
 
       res.json({ ...apiKey, key: apiKeyString });

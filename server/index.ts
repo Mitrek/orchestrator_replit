@@ -43,8 +43,7 @@ app.use((req, res, next) => {
 (async () => {
   const server = await registerRoutes(app);
 
-  // ⬇️ Register new API key + ping routes
-  registerApiKeyRoutes(app);
+  // ⬇️ Register ping route only (API keys handled in routes.ts)
   registerPingRoute(app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {

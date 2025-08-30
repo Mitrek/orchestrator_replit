@@ -1,9 +1,9 @@
-import { 
-  users, 
-  apiKeys, 
-  requestLogs, 
+import {
+  users,
+  apiKeys,
+  requestLogs,
   integrations,
-  type User, 
+  type User,
   type InsertUser,
   type ApiKey,
   type InsertApiKey,
@@ -192,7 +192,7 @@ export class DatabaseStorage implements IStorage {
   // Analytics methods
   async getApiKeyUsageStats(apiKeyId: string, hours: number): Promise<{ count: number; avgResponseTime: number; errorRate: number }> {
     const since = new Date(Date.now() - hours * 60 * 60 * 1000);
-    
+
     const logs = await db
       .select({
         statusCode: requestLogs.statusCode,
@@ -206,8 +206,8 @@ export class DatabaseStorage implements IStorage {
 
     const totalRequests = logs.length;
     const errorRequests = logs.filter(log => log.statusCode >= 400).length;
-    const avgResponseTime = logs.length > 0 
-      ? logs.reduce((sum, log) => sum + (log.responseTime || 0), 0) / logs.length 
+    const avgResponseTime = logs.length > 0
+      ? logs.reduce((sum, log) => sum + (log.responseTime || 0), 0) / logs.length
       : 0;
     const errorRate = totalRequests > 0 ? (errorRequests / totalRequests) * 100 : 0;
 
@@ -248,8 +248,8 @@ export class DatabaseStorage implements IStorage {
 
     const totalRequests = todayLogs.length;
     const errorRequests = todayLogs.filter(log => log.statusCode >= 400).length;
-    const avgResponseTime = todayLogs.length > 0 
-      ? todayLogs.reduce((sum, log) => sum + (log.responseTime || 0), 0) / todayLogs.length 
+    const avgResponseTime = todayLogs.length > 0
+      ? todayLogs.reduce((sum, log) => sum + (log.responseTime || 0), 0) / todayLogs.length
       : 0;
     const errorRate = totalRequests > 0 ? (errorRequests / totalRequests) * 100 : 0;
 

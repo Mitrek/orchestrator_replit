@@ -21,11 +21,13 @@ export function ApiKeyCard({
   const { toast } = useToast();
 
   const handleCopy = () => {
+    // Note: We can only copy the prefix since the full key is only shown once during creation
     const maskedKey = `${apiKey.keyPrefix}••••••••••••••••••••••••••••`;
     navigator.clipboard.writeText(maskedKey);
     toast({
-      title: "API Key Copied",
-      description: "The API key has been copied to your clipboard.",
+      title: "Masked Key Copied",
+      description: "The masked API key prefix has been copied. Full keys are only shown during creation.",
+      variant: "default",
     });
   };
 

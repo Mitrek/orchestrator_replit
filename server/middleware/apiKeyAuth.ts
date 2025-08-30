@@ -1,6 +1,6 @@
 import bcrypt from "bcryptjs";
 import { db } from "../db";                 // ← adjust if your drizzle client path differs
-import { apiKeys, users } from "../db/schema";
+import { apiKeys, users } from "@shared/schema";
 import { eq } from "drizzle-orm";
 
 export async function apiKeyAuth(req, res, next) {

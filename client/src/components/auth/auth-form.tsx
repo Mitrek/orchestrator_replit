@@ -71,19 +71,19 @@ export function AuthForm({ mode, onSuccess, onModeChange }: AuthFormProps) {
     setIsLoading(true);
     try {
       await register(data);
-      
+
       registerForm.reset(); // Clear the form immediately
       toast({
         title: "Welcome to Ai-lure Orchestrator!",
         description: "Your account has been created successfully. Taking you to your dashboard...",
       });
-      
+
       // Redirect after a brief delay
       setTimeout(() => {
         // Force page reload to re-check authentication state
         window.location.href = "/";
       }, 2000);
-      
+
     } catch (error: any) {
       toast({
         title: "Registration failed",
@@ -283,7 +283,7 @@ export function AuthForm({ mode, onSuccess, onModeChange }: AuthFormProps) {
               </form>
             </Form>
           )}
-          
+
           <div className="mt-6 text-center">
             <p className="text-sm text-muted-foreground">
               {mode === "login" ? "Don't have an account?" : "Already have an account?"}{" "}

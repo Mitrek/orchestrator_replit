@@ -1,6 +1,8 @@
 import { Header } from "./header";
 import { Sidebar } from "./sidebar";
 import { User } from "@shared/schema";
+// ✅ add this import
+import { Toaster } from "@/components/ui/toaster";
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -17,6 +19,9 @@ export function Layout({ children, user }: LayoutProps) {
           {children}
         </main>
       </div>
+
+      {/* ✅ mount once so toasts appear over dialogs */}
+      <Toaster />
     </div>
   );
 }

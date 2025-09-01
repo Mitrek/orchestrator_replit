@@ -52,7 +52,7 @@ export default function Dashboard({ user }: { user: User | null }) {
       });
 
       if (response.ok) {
-        const newKey = await response.json();
+        await response.json();
         // Refresh the API keys list
         window.location.reload();
         setIsCreateDialogOpen(false);
@@ -108,7 +108,7 @@ export default function Dashboard({ user }: { user: User | null }) {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           <StatsCard
             title="Active API Keys"
-            value={stats?.activeKeys || 0}
+            value={stats?.activeKeys ?? 0}
             description="Active API Keys"
             icon={Key}
             change="+12%"
@@ -117,7 +117,7 @@ export default function Dashboard({ user }: { user: User | null }) {
           />
           <StatsCard
             title="Requests Today"
-            value={stats?.totalRequests || 0}
+            value={stats?.totalRequests ?? 0}
             description="Requests Today"
             icon={Activity}
             change="+8%"
@@ -126,7 +126,7 @@ export default function Dashboard({ user }: { user: User | null }) {
           />
           <StatsCard
             title="Avg Response Time"
-            value={`${stats?.avgResponseTime || 0}ms`}
+            value={(stats?.avgResponseTime ?? 0) + "ms"}
             description="Avg Response Time"
             icon={Clock}
             change="-3ms"
@@ -135,7 +135,7 @@ export default function Dashboard({ user }: { user: User | null }) {
           />
           <StatsCard
             title="Error Rate"
-            value={`${stats?.errorRate || 0}%`}
+            value={(stats?.errorRate ?? 0) + "%"}
             description="Error Rate"
             icon={AlertTriangle}
             change="-0.1%"
@@ -168,7 +168,7 @@ export default function Dashboard({ user }: { user: User | null }) {
                         usageCount={Math.floor(Math.random() * 500)} // Mock usage data
                         usagePercentage={Math.random() * 50}
                         // Pass the full apiKey to ApiKeyCard so it can be copied
-                        fullApiKey={apiKey.key}
+                        fullApiKey={(apiKey as any).key}
                       />
                     ))}
                   </div>
@@ -272,8 +272,8 @@ export default function Dashboard({ user }: { user: User | null }) {
                     Get started with your first API request in under 5 minutes.
                   </p>
                   <div className="text-xs bg-muted rounded p-2 font-mono">
-                    curl -H "X-API-Key: your_key" \<br />
-                    &nbsp;&nbsp;https://api.ai-lure.com/v1/orchestrate
+                    curl -H "X-API-Key: your_key" <br />
+                    https://api.ai-lure.com/v1/orchestrate
                   </div>
                 </CardContent>
               </Card>
@@ -297,7 +297,7 @@ export default function Dashboard({ user }: { user: User | null }) {
                 </CardContent>
               </Card>
 
-              <Card className="hover:bg-muted/50 transition-colors" data-testid="doc-google-sheets">
+              <Card className="hover/bg-muted/50 transition-colors" data-testid="doc-google-sheets">
                 <CardContent className="p-4">
                   <div className="flex items-center space-x-3 mb-3">
                     <div className="w-8 h-8 bg-accent/10 rounded-lg flex items-center justify-center">
@@ -317,6 +317,7 @@ export default function Dashboard({ user }: { user: User | null }) {
           </CardContent>
         </Card>
       </div>
+
       {/* Placeholder for the API Key creation dialog */}
       {/* This would typically be a modal component */}
       {isCreateDialogOpen && (

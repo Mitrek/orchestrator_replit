@@ -23,13 +23,12 @@ const apiLimiter = rateLimit({
   message: { error: "Rate limit exceeded" },
   standardHeaders: true,
   legacyHeaders: false,
-  // Remove custom keyGenerator to use default IP handling
 });
 
 // Middleware to authenticate API keys
 async function authenticateApiKey(req: any, res: any, next: any) {
   const apiKey = req.headers['x-api-key'] as string;
-  
+
   if (!apiKey) {
     return res.status(401).json({ error: "API key required" });
   }
@@ -38,21 +37,21 @@ async function authenticateApiKey(req: any, res: any, next: any) {
     // Get all API keys and check against bcrypt hash
     const allKeys = await storage.getAllApiKeys();
     let matchedKey = null;
-    
+
     for (const key of allKeys) {
       if (key.isActive && await bcrypt.compare(apiKey, key.keyHash)) {
         matchedKey = key;
         break;
       }
     }
-    
+
     if (!matchedKey) {
       return res.status(401).json({ error: "Invalid or inactive API key" });
     }
 
     // Update last used time
     await storage.updateApiKey(matchedKey.id, { lastUsedAt: new Date() });
-    
+
     req.apiKey = matchedKey;
     req.userId = matchedKey.userId;
     next();
@@ -87,7 +86,7 @@ async function rateLimitByApiKey(req: any, res: any, next: any) {
 
   const { apiKey } = req;
   const stats = await storage.getApiKeyUsageStats(apiKey.id, 1); // Last hour
-  
+
   if (stats.count >= apiKey.rateLimit) {
     return res.status(429).json({ 
       error: "Rate limit exceeded for this API key",
@@ -115,7 +114,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Hash password
       const hashedPassword = await bcrypt.hash(userData.password, 10);
-      
+
       const user = await storage.createUser({
         ...userData,
         password: hashedPassword,
@@ -187,6 +186,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  /**
+   * CREATE API KEY
+   * - generates a new plaintext key (returned ONCE)
+   * - stores only a bcrypt hash + a displayable prefix
+   * - returns a safe payload without keyHash leakage
+   */
   app.post("/api/api-keys", authenticateToken, async (req: any, res) => {
     try {
       const validatedData = insertApiKeySchema.parse({
@@ -194,20 +199,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
         userId: req.user.userId,
       });
 
-      // Generate API key using the same format as the other route
-      const keyPrefix = crypto.randomBytes(4).toString("hex");     // 8 chars
-      const body = crypto.randomBytes(24).toString("base64url");   // ~32 url-safe
-      const apiKeyString = `ai_lure_${keyPrefix}_${body}`;
-      const keyHash = await bcrypt.hash(apiKeyString, 12);
-      const displayPrefix = `ai_lure_${keyPrefix}`;
+      // Generate plaintext key: ai_lure_<8-hex>_<url-safe-body>
+      const keyPrefixHex = crypto.randomBytes(4).toString("hex");     // 8 chars
+      const body = crypto.randomBytes(24).toString("base64url");       // ~32 url-safe
+      const plaintextKey = `ai_lure_${keyPrefixHex}_${body}`;
 
-      const apiKey = await storage.createApiKey({
+      // Hash for storage
+      const keyHash = await bcrypt.hash(plaintextKey, 12);
+
+      // What we keep for display in lists (no secret)
+      const displayPrefix = `ai_lure_${keyPrefixHex}`;
+
+      // Save to storage (DO NOT return keyHash to client)
+      const created = await storage.createApiKey({
         ...validatedData,
         keyHash,
         keyPrefix: displayPrefix,
       });
 
-      res.json({ ...apiKey, key: apiKeyString });
+      // Build a safe response object (omit keyHash entirely)
+      const {
+        id,
+        userId,
+        name,
+        rateLimit,
+        isActive,
+        keyPrefix,
+        createdAt,
+        lastUsedAt,
+      } = created;
+
+      res.status(201).json({
+        // plaintext ONCE (for the UI modal)
+        apiKey: plaintextKey,
+
+        // convenient fields for your UI/toast
+        name,
+
+        // non-sensitive metadata you already show in the list
+        id,
+        userId,
+        rateLimit,
+        isActive,
+        keyPrefix,
+        createdAt,
+        lastUsedAt,
+      });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
@@ -331,7 +368,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       { title: "Climate Summit Announces New Initiatives", source: "EnviroUpdate", category: "environment" },
       { title: "Healthcare Breakthrough in AI Diagnostics", source: "MedNews", category: "health" },
     ];
-    
+
     return {
       category,
       articles: mockNews.filter(article => article.category === category || category === "general").slice(0, 3),
@@ -359,18 +396,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         integrations.map(async (integration: string) => {
           try {
             let integrationData;
-            
+
             switch (integration.toLowerCase()) {
               case "weather":
                 const location = data?.location || "San Francisco";
                 integrationData = await getWeatherData(location);
                 break;
-                
+
               case "news":
                 const category = data?.category || "general";
                 integrationData = await getNewsData(category);
                 break;
-                
+
               case "hello":
                 integrationData = {
                   message: "Hello from AI-lure Orchestrator!",
@@ -378,7 +415,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   user: req.apiKey.name || "API User"
                 };
                 break;
-                
+
               default:
                 integrationData = {
                   message: `Integration '${integration}' is not yet implemented`,

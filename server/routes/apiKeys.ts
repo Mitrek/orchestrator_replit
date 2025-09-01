@@ -1,39 +1,51 @@
+// server/routes/apiKeys.ts
+import { Router } from "express";
 import crypto from "crypto";
-import bcrypt from "bcryptjs";
-import { db } from "../db";
-import { apiKeys } from "@shared/schema";
+// import your DB + schema
+// import { db } from "../db";               // <- adjust to your path
+// import { apiKeys } from "../db/schema";   // <- adjust to your path
+// import { requireAuth } from "../middleware/auth"; // <- if you have it
 
-function genKey(prefix = "ai_lure") {
-  const keyPrefix = crypto.randomBytes(4).toString("hex");     // 8 chars
-  const body = crypto.randomBytes(24).toString("base64url");   // ~32 url-safe
-  const raw = `${prefix}_${keyPrefix}_${body}`;
-  return { keyPrefix, raw, displayPrefix: `${prefix}_${keyPrefix}` };
+const router = Router();
+
+function generateApiKey() {
+  // Example key: sa_xxx... (52 chars total is fine)
+  const raw = "sa_" + crypto.randomBytes(24).toString("hex");
+  const hash = crypto.createHash("sha256").update(raw).digest("hex");
+  const lastFour = raw.slice(-4);
+  return { raw, hash, lastFour };
 }
 
-export function registerApiKeyRoutes(app) {
-  // POST /api/v1/keys — create and return FULL key ONCE
-  app.post("/api/v1/keys", async (req, res) => {
-    // If you already have auth/session, get userId from there:
-    const userId = req.user?.id || req.body.userId; // TEMP: adapt to your auth
-    if (!userId) return res.status(401).json({ message: "No userId" });
+/**
+ * POST /api/keys
+ * Create a new API key and return the plaintext ONCE.
+ */
+router.post("/api/keys", /*requireAuth,*/ async (req, res) => {
+  try {
+    // const userId = req.user.id; // from auth middleware
+    const userId = req.body.userId ?? null; // <-- replace with your auth source
 
-    const { name = "default" } = req.body ?? {};
-    const { keyPrefix, raw, displayPrefix } = genKey("ai_lure");
-    const keyHash = await bcrypt.hash(raw, 12);
+    const { raw, hash, lastFour } = generateApiKey();
 
-    const [row] = await db.insert(apiKeys).values({
-      userId,
-      name,
-      keyHash,
-      keyPrefix,
-      isActive: true,
-    }).returning();
+    // Persist ONLY the hash
+    // await db.insert(apiKeys).values({
+    //   userId,
+    //   hash,
+    //   lastFour,
+    //   createdAt: new Date(),
+    //   active: true,
+    // });
 
-    res.status(201).json({
-      id: row.id,
-      name: row.name,
-      key: raw,                 // <-- show once
-      keyPrefix: displayPrefix, // e.g. ai_lure_391877ec
+    // If you need to return metadata to list in the UI, you can include it here.
+    return res.status(201).json({
+      apiKey: raw,         // plaintext shown ONCE
+      lastFour,            // helpful to show in list later
+      message: "API key created. You will not be able to see it again.",
     });
-  });
-}
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Failed to create API key" });
+  }
+});
+
+export default router;

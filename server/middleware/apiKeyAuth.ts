@@ -26,21 +26,21 @@ export async function apiKeyAuth(req: Request, res: Response, next: NextFunction
 
     // Drizzle query
     const row = await db.query.apiKeys.findFirst({
-      where: (t, { eq }) => eq(t.key_prefix, prefix),
+      where: eq(apiKeys.keyPrefix, prefix),
       columns: {
         id: true,
-        key_hash: true,
-        is_active: true,
+        keyHash: true,
+        isActive: true,
       },
     });
 
-    if (!row || !row.is_active) {
+    if (!row || !row.isActive) {
       return res.status(403).json({ message: "Invalid or inactive key" });
     }
 
     // Compare with correct part (secret or full key)
     const plaintext = HASH_ONLY_SECRET ? secret : full;
-    const ok = await bcrypt.compare(plaintext, row.key_hash);
+    const ok = await bcrypt.compare(plaintext, row.keyHash);
 
     if (!ok) {
       return res.status(403).json({ message: "Invalid or inactive key" });

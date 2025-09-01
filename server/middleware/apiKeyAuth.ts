@@ -4,7 +4,7 @@ import { db } from "../db";                 // your Drizzle db instance
 import { apiKeys } from "@shared/schema";   // your Drizzle table schema
 import { eq } from "drizzle-orm";
 
-const HASH_ONLY_SECRET = true; // set to false if you hashed the full key
+const HASH_ONLY_SECRET = false; // set to false if you hashed the full key
 
 function parseApiKey(raw: string | undefined) {
   const trimmed = (raw || "").trim();

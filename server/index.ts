@@ -1,12 +1,15 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+
+// Keep only the ping route here; all other APIs are registered in routes.ts
 import { registerPingRoute } from "./routes/ping";
 
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
+// Request timing + compact API response logger
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
@@ -25,11 +28,9 @@ app.use((req, res, next) => {
       if (capturedJsonResponse) {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       }
-
       if (logLine.length > 80) {
         logLine = logLine.slice(0, 79) + "…";
       }
-
       log(logLine);
     }
   });
@@ -40,30 +41,49 @@ app.use((req, res, next) => {
 (async () => {
   const server = await registerRoutes(app);
 
-  // ⬇️ Register ping route only (API keys handled in routes.ts)
+  // Health check stays close to the entrypoint
   registerPingRoute(app);
 
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
+  // ✅ Safer centralized error handler: log & respond, don't crash the process
+  app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+    const status = err?.status || err?.statusCode || 500;
+    const message = err?.message || "Internal Server Error";
 
-    res.status(status).json({ message });
-    throw err;
+    // Basic logging (avoid throwing to keep prod stable)
+    try {
+      log(`ERROR ${status}: ${message}`);
+      if (req?.method && req?.path) {
+        log(`at ${req.method} ${req.path}`);
+      }
+      if (app.get("env") === "development" && err?.stack) {
+        // In dev you can surface the stack in logs
+        log(err.stack);
+      }
+    } catch {
+      /* ignore logging failures */
+    }
+
+    if (!res.headersSent) {
+      // Optionally include stack in dev responses (omit in prod)
+      const payload: Record<string, any> = { message };
+      if (app.get("env") === "development" && err?.stack) {
+        payload.stack = err.stack;
+      }
+      res.status(status).json(payload);
+    } else {
+      // If headers already sent, delegate to Express default error handler
+      next(err);
+    }
   });
 
-  // importantly only setup vite in development and after
-  // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
+  // Dev vs Prod: Vite middleware or static serving
   if (app.get("env") === "development") {
     await setupVite(app, server);
   } else {
     serveStatic(app);
   }
 
-  // ALWAYS serve the app on the port specified in the environment variable PORT
-  // Other ports are firewalled. Default to 5000 if not specified.
-  // this serves both the API and the client.
-  // It is the only port that is not firewalled.
+  // ALWAYS serve on PORT (only open port in the environment). Default 5000 locally.
   const port = parseInt(process.env.PORT || "5000", 10);
   server.listen(
     {

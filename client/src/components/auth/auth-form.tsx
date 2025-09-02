@@ -72,17 +72,11 @@ export function AuthForm({ mode, onSuccess, onModeChange }: AuthFormProps) {
     try {
       await register(data);
 
-      registerForm.reset(); // Clear the form immediately
       toast({
         title: "Welcome to Ai-lure Orchestrator!",
-        description: "Your account has been created successfully. Taking you to your dashboard...",
+        description: "Your account has been created successfully.",
       });
-
-      // Redirect after a brief delay
-      setTimeout(() => {
-        // Force page reload to re-check authentication state
-        window.location.href = "/";
-      }, 2000);
+      onSuccess();
 
     } catch (error: any) {
       toast({

@@ -27,7 +27,7 @@ export default function Dashboard({ user }: { user: User | null }) {
   });
 
   const { data: apiKeys, isLoading: keysLoading } = useQuery<ApiKey[]>({
-    queryKey: ["/api/api-keys"],
+    queryKey: ["/api/keys"],
     enabled: !!token,
   });
 
@@ -39,7 +39,7 @@ export default function Dashboard({ user }: { user: User | null }) {
   // Function to handle creating a new API key
   const handleCreateApiKey = async () => {
     try {
-      const response = await fetch("/api/api-keys", {
+      const response = await fetch("/api/keys", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

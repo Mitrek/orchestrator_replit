@@ -1,4 +1,4 @@
-          import { useState } from "react";
+import { useState } from "react";
           import { useQuery, useMutation } from "@tanstack/react-query";
           import { Layout } from "@/components/layout/layout";
           import { ApiKeyCard } from "@/components/dashboard/api-key-card";
@@ -36,7 +36,7 @@
             const token = getAuthToken();
 
             const { data: apiKeys, isLoading } = useQuery<ApiKey[]>({
-              queryKey: ["/api/api-keys"],
+              queryKey: ["/api/keys"],
               enabled: !!token,
             });
 
@@ -52,11 +52,11 @@
             const createApiKeyMutation = useMutation({
               mutationFn: async (data: InsertApiKey) => {
                 // IMPORTANT: backend must return { apiKey: string, name?: string }
-                const response = await apiRequest("POST", "/api/api-keys", data);
+                const response = await apiRequest("POST", "/api/keys", data);
                 return response.json() as Promise<{ apiKey?: string; name?: string }>;
               },
               onSuccess: (data) => {
-                queryClient.invalidateQueries({ queryKey: ["/api/api-keys"] });
+                queryClient.invalidateQueries({ queryKey: ["/api/keys"] });
                 setIsCreateDialogOpen(false);
                 form.reset();
 
@@ -82,10 +82,10 @@
 
             const deleteApiKeyMutation = useMutation({
               mutationFn: async (id: string) => {
-                await apiRequest("DELETE", `/api/api-keys/${id}`);
+                await apiRequest("DELETE", `/api/keys/${id}`);
               },
               onSuccess: () => {
-                queryClient.invalidateQueries({ queryKey: ["/api/api-keys"] });
+                queryClient.invalidateQueries({ queryKey: ["/api/keys"] });
                 toast({
                   title: "API Key Deleted",
                   description: "The API key has been permanently deleted.",

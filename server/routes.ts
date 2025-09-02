@@ -85,20 +85,23 @@ async function rateLimitByApiKey(req: any, res: any, next: any) {
     return next();
   }
 
-  const apiKeyId = (req as any).apiKeyId;
-  if (!apiKeyId) return next();
-  const stats = await storage.getApiKeyUsageStats(apiKeyId, 1);
+  try {
+    const stats = await storage.getApiKeyUsageStats(req.apiKey.id, 1);
 
-  if (stats.count >= apiKey.rateLimit) {
-    return res.status(429).json({ 
-      error: "Rate limit exceeded for this API key",
-      limit: apiKey.rateLimit,
-      used: stats.count,
-      resetTime: new Date(Date.now() + 60 * 60 * 1000).toISOString()
-    });
+    if (stats.count >= req.apiKey.rateLimit) {
+      return res.status(429).json({ 
+        error: "Rate limit exceeded for this API key",
+        limit: req.apiKey.rateLimit,
+        used: stats.count,
+        resetTime: new Date(Date.now() + 60 * 60 * 1000).toISOString()
+      });
+    }
+
+    next();
+  } catch (error) {
+    console.error("Rate limiting error:", error);
+    next(); // Continue on rate limiting errors
   }
-
-  next();
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -380,7 +383,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }
 
   // Main API orchestration endpoint
-    app.post("/api/v1/orchestrate", apiLimiter, apiKeyAuth, rateLimitByApiKey, async (req, res) => {
+  app.post("/api/v1/orchestrate", apiLimiter, authenticateApiKey, rateLimitByApiKey, async (req, res) => {
     const startTime = Date.now();
     let statusCode = 200;
     let errorMessage = null;

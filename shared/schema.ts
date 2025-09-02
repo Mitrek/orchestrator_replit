@@ -12,6 +12,9 @@ export const users = pgTable("users", {
   firstName: text("first_name"),
   lastName: text("last_name"),
   isAdmin: boolean("is_admin").default(false),
+  subscriptionStatus: text("subscription_status").default("inactive").notNull(),
+  currentPeriodEnd: timestamp("current_period_end", { withTimezone: true }).nullable(),
+
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

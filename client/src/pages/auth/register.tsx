@@ -14,7 +14,8 @@ export default function Register() {
   }, [navigate]);
 
   const handleSuccess = () => {
-    navigate("/");
+    // Force a page reload to ensure authentication state is properly checked
+    window.location.href = "/";
   };
 
   return (

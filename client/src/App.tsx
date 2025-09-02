@@ -33,6 +33,19 @@ function Router() {
     };
 
     checkAuth();
+
+    // Listen for authentication changes
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'auth_token') {
+        checkAuth();
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+    };
   }, []);
 
   if (isLoading) {

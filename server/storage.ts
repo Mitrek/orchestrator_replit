@@ -12,8 +12,8 @@ import {
   type Integration,
   type InsertIntegration
 } from "@shared/schema";
-import { db, withDatabaseRetry } from "./db";
-import { eq, and, desc, gte } from "drizzle-orm";
+import { db, withDbRetry } from "./db";
+import { eq, and, desc, gte, count } from "drizzle-orm";
 
 export interface IStorage {
   // User methods
@@ -55,14 +55,14 @@ export interface IStorage {
 export class DatabaseStorage implements IStorage {
   // User methods
   async getUser(id: string): Promise<User | undefined> {
-    return withDatabaseRetry(async () => {
+    return withDbRetry(async () => {
       const [user] = await db.select().from(users).where(eq(users.id, id));
       return user || undefined;
     });
   }
 
   async getUserByEmail(email: string): Promise<User | undefined> {
-    return withDatabaseRetry(async () => {
+    return withDbRetry(async () => {
       const [user] = await db.select().from(users).where(eq(users.email, email));
       return user || undefined;
     });
@@ -74,7 +74,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createUser(insertUser: InsertUser): Promise<User> {
-    return withDatabaseRetry(async () => {
+    return withDbRetry(async () => {
       const [user] = await db
         .insert(users)
         .values(insertUser)

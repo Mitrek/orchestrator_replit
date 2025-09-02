@@ -4,6 +4,16 @@ import { setupVite, serveStatic, log } from "./vite";
 
 // Keep only the ping route here; all other APIs are registered in routes.ts
 import { registerPingRoute } from "./routes/ping";
+// server/index.ts (very top – first imports)
+import { neonConfig } from "@neondatabase/serverless";
+
+// Hard block any WS usage if some file tries to set it up later
+// @ts-ignore
+delete neonConfig.webSocketConstructor;
+// @ts-ignore
+delete (neonConfig as any).wsProxy;
+// @ts-ignore
+delete (neonConfig as any).webSocketProxy;
 
 const app = express();
 app.use(express.json());

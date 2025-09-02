@@ -17,6 +17,8 @@ import rateLimit from "express-rate-limit";
 import { db, withDbRetry } from "./db";
 import { users } from "@shared/schema";
 import { eq } from "drizzle-orm";
+import { apiKeyAuth } from "./middleware/apiKeyAuth";
+
 
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
@@ -143,10 +145,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Subscription checker (simple rules)
-  app.get("/api/subscription/:userId", async (req, res) => {
+  // Subscription checker (API key → user → status)
+  app.get("/api/subscription", apiKeyAuth, async (req, res) => {
     try {
-      const { userId } = req.params;
+      const userId = (req as any).userId as string;
+      if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
       const [row] = await withDbRetry(() =>
         db
@@ -159,37 +162,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .limit(1)
       );
 
-      if (!row) {
-        return res.status(404).json({ error: "User not found" });
-      }
+      if (!row) return res.status(404).json({ error: "User not found" });
 
       const now = new Date();
       const endsAt = row.periodEnd ? new Date(row.periodEnd) : null;
 
-      // ACTIVE: status=active and periodEnd in the future
+      // ACTIVE: status active AND periodEnd in the future
       if (row.status === "active" && endsAt && endsAt.getTime() > now.getTime()) {
         const diffMs = endsAt.getTime() - now.getTime();
         const daysRemaining = Math.floor(diffMs / (1000 * 60 * 60 * 24)); // FLOOR()
         return res.json({ daysRemaining });
       }
 
-      // NEVER SUBSCRIBED: no periodEnd at all (null)
+      // NEVER SUBSCRIBED: no period end at all
       if (!endsAt) {
         return res.json({ message: "Subscribe at ai-lure.net" });
       }
 
-      // EXPIRED (has a periodEnd but it's in the past OR status inactive)
+      // EXPIRED (has periodEnd but it’s in the past OR status not active)
       if (endsAt.getTime() <= now.getTime() || row.status !== "active") {
         return res.json({ message: "Subscription expired, renew at ai-lure.net" });
       }
 
-      // Fallback (shouldn’t really hit)
+      // Fallback (very unlikely)
       return res.json({ message: "Subscribe at ai-lure.net" });
     } catch (err) {
-      console.error("subscription endpoint error:", err);
+      console.error("GET /api/subscription error:", err);
       res.status(500).json({ error: "Internal server error" });
     }
   });
+
 
   
   app.post("/api/auth/login", async (req, res) => {

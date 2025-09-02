@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
+import { apiKeyAuth } from "./middleware/apiKeyAuth";
 import { 
   insertUserSchema, 
   loginSchema, 
@@ -84,8 +85,9 @@ async function rateLimitByApiKey(req: any, res: any, next: any) {
     return next();
   }
 
-  const { apiKey } = req;
-  const stats = await storage.getApiKeyUsageStats(apiKey.id, 1); // Last hour
+  const apiKeyId = (req as any).apiKeyId;
+  if (!apiKeyId) return next();
+  const stats = await storage.getApiKeyUsageStats(apiKeyId, 1);
 
   if (stats.count >= apiKey.rateLimit) {
     return res.status(429).json({ 
@@ -177,7 +179,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // API Key management routes
-  app.get("/api/api-keys", authenticateToken, async (req: any, res) => {
+  app.get("/api/keys", authenticateToken, async (req: any, res) => {
     try {
       const apiKeys = await storage.getApiKeysByUserId(req.user.userId);
       res.json(apiKeys);
@@ -192,7 +194,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
    * - stores only a bcrypt hash + a displayable prefix
    * - returns a safe payload without keyHash leakage
    */
-  app.post("/api/api-keys", authenticateToken, async (req: any, res) => {
+  app.post("/api/keys", authenticateToken, async (req: any, res) => {
     try {
       const validatedData = insertApiKeySchema.parse({
         ...req.body,
@@ -250,7 +252,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/api-keys/:id", authenticateToken, async (req: any, res) => {
+  app.delete("/api/keys/:id", authenticateToken, async (req: any, res) => {
     try {
       const apiKey = await storage.getApiKey(req.params.id);
       if (!apiKey || apiKey.userId !== req.user.userId) {
@@ -264,7 +266,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/api-keys/:id", authenticateToken, async (req: any, res) => {
+  app.patch("/api/keys/:id", authenticateToken, async (req: any, res) => {
     try {
       const apiKey = await storage.getApiKey(req.params.id);
       if (!apiKey || apiKey.userId !== req.user.userId) {
@@ -378,7 +380,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }
 
   // Main API orchestration endpoint
-  app.post("/api/v1/orchestrate", apiLimiter, authenticateApiKey, rateLimitByApiKey, async (req: any, res) => {
+    app.post("/api/v1/orchestrate", apiLimiter, apiKeyAuth, rateLimitByApiKey, async (req, res) => {
     const startTime = Date.now();
     let statusCode = 200;
     let errorMessage = null;

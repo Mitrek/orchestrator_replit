@@ -266,27 +266,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ------------------------- Demo Integrations (JWT) -------------------------
-  app.get("/api/integrations", authenticateToken, async (req: any, res) => {
-    try {
-      const integrations = await storage.getIntegrationsByUserId(req.user.userId);
-      res.json(integrations);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.post("/api/integrations", authenticateToken, async (req: any, res) => {
-    try {
-      const validatedData = /* insertIntegrationSchema */ {
-        ...req.body,
-        userId: req.user.userId,
-      };
-      const integration = await storage.createIntegration(validatedData as any);
-      res.json(integration);
-    } catch (error: any) {
-      res.status(400).json({ error: error.message });
-    }
-  });
+  // Removed as per the request.
 
   // ------------------------- Orchestrate (API key) ---------------------------
   // NOTE: Use the unified apiKeyAuth + your per-key limiter

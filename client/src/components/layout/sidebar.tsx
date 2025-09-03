@@ -26,30 +26,20 @@ const navigationItems = [
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
       { name: "API Keys", href: "/api-keys", icon: Key },
-      { name: "Integrations", href: "/integrations", icon: Plug },
+      { name: "Analytics", href: "/analytics", icon: BarChart3 },
       { name: "Request Logs", href: "/logs", icon: History },
-    ],
-  },
-  {
-    title: "Analytics",
-    items: [
-      { name: "Usage Stats", href: "/analytics", icon: BarChart3 },
-      { name: "Error Rates", href: "/analytics/errors", icon: AlertTriangle },
-      { name: "Performance", href: "/analytics/performance", icon: Clock },
     ],
   },
   {
     title: "Documentation",
     items: [
       { name: "API Reference", href: "/docs", icon: Book },
-      { name: "Quick Start", href: "/docs/quickstart", icon: Play },
       { name: "Code Examples", href: "/docs/examples", icon: FileText },
     ],
   },
   {
     title: "Administration",
     items: [
-      { name: "User Management", href: "/admin/users", icon: Users },
       { name: "Settings", href: "/settings", icon: Cog },
     ],
   },

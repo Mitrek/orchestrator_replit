@@ -11,9 +11,11 @@ import Login from "@/pages/auth/login";
 import Register from "@/pages/auth/register";
 import Dashboard from "@/pages/dashboard";
 import ApiKeys from "@/pages/api-keys";
-import Integrations from "@/pages/integrations";
-import Analytics from "@/pages/analytics";
-import ApiKeysPage from "./pages/ApiKeysPage";
+import AnalyticsPage from "@/pages/analytics"; // Renamed from Analytics to AnalyticsPage to avoid conflict
+import Settings from "./pages/settings";
+import CodeExamples from "./pages/code-examples";
+import RequestLogs from "./pages/request-logs";
+import Documentation from "./pages/documentation"; // Assuming documentation page exists
 
 function Router() {
   const [user, setUser] = useState<User | null>(null);
@@ -42,7 +44,7 @@ function Router() {
     };
 
     window.addEventListener('storage', handleStorageChange);
-    
+
     return () => {
       window.removeEventListener('storage', handleStorageChange);
     };
@@ -70,14 +72,18 @@ function Router() {
     <Switch>
       <Route path="/" component={() => <Dashboard user={user} />} />
       <Route path="/api-keys" component={() => <ApiKeys user={user} />} />
-      <Route path="/integrations" component={() => <Integrations user={user} />} />
-      <Route path="/analytics" component={() => <Analytics user={user} />} />
-      <Route path="/analytics/:tab" component={() => <Analytics user={user} />} />
-      <Route path="/logs" component={() => <Analytics user={user} />} />
-      <Route path="/docs" component={() => <Analytics user={user} />} />
-      <Route path="/docs/:section" component={() => <Analytics user={user} />} />
-      <Route path="/admin/:section" component={() => <Analytics user={user} />} />
-      <Route path="/settings" component={() => <Analytics user={user} />} />
+      {/* Removed: <Route path="/integrations" component={() => <Integrations user={user} />} /> */}
+      <Route path="/analytics" component={() => <AnalyticsPage user={user} />} />
+      <Route path="/analytics/:tab" component={() => <AnalyticsPage user={user} />} />
+      {/* Removed: <Route path="/logs" component={() => <Analytics user={user} />} /> */}
+      {/* Removed: <Route path="/docs" component={() => <Analytics user={user} />} /> */}
+      {/* Removed: <Route path="/docs/:section" component={() => <Analytics user={user} />} /> */}
+      {/* Removed: <Route path="/admin/:section" component={() => <Analytics user={user} />} /> */}
+      {/* Removed: <Route path="/settings" component={() => <Analytics user={user} />} /> */}
+      <Route path="/settings" component={() => <Settings user={user} />} />
+      <Route path="/docs" component={() => <Documentation user={user} />} />
+      <Route path="/docs/examples" component={() => <CodeExamples user={user} />} />
+      <Route path="/logs" component={() => <RequestLogs user={user} />} />
       <Route component={NotFound} />
     </Switch>
   );

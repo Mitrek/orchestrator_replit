@@ -2,15 +2,15 @@
 import { Layout } from "@/components/layout/layout";
 import { ComingSoon } from "@/components/ui/coming-soon";
 import { User } from "@shared/schema";
-import { Book } from "lucide-react";
+import { Cog } from "lucide-react";
 
-export default function Documentation({ user }: { user: User | null }) {
+export default function Settings({ user }: { user: User | null }) {
   return (
     <Layout user={user}>
       <ComingSoon 
         title="Coming Soon"
-        description="API documentation and reference materials are currently being prepared and will be available soon."
-        icon={Book}
+        description="Settings and configuration options are currently being developed and will be available soon."
+        icon={Cog}
       />
     </Layout>
   );

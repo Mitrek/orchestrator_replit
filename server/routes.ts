@@ -1,76 +1,64 @@
-import type { Express } from "express";
+// FILE: server/routes.ts
 import { createServer, type Server } from "http";
-import { storage } from "./storage";
-import { apiKeyAuth } from "./middleware/apiKeyAuth";
-import { 
-  insertUserSchema, 
-  loginSchema, 
-  registerSchema, 
-  insertApiKeySchema,
-  insertIntegrationSchema,
-  insertRequestLogSchema
-} from "@shared/schema";
+import type { Express, Request, Response } from "express";
+
+import crypto from "crypto";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import crypto from "crypto";
 import rateLimit from "express-rate-limit";
+
+import { storage } from "./storage";
+import {
+  loginSchema,
+  registerSchema,
+  insertApiKeySchema,
+  users, // from @shared/schema via drizzle model re-exports
+} from "@shared/schema";
+
 import { db, withDbRetry } from "./db";
-import { users } from "@shared/schema";
 import { eq } from "drizzle-orm";
+
 import { apiKeyAuth } from "./middleware/apiKeyAuth";
-
-
+import { ensurePremium } from "./middleware/ensurePremium";
+import { generateHeatmap } from "./services/heatmap";
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 
-// Rate limiting middleware
+// ----------------------------- Rate Limiting ---------------------------------
 const apiLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
-  max: 1000, // Default limit
+  max: 1000,
   message: { error: "Rate limit exceeded" },
   standardHeaders: true,
   legacyHeaders: false,
 });
 
-// Middleware to authenticate API keys
-async function authenticateApiKey(req: any, res: any, next: any) {
-  const apiKey = req.headers['x-api-key'] as string;
-
-  if (!apiKey) {
-    return res.status(401).json({ error: "API key required" });
-  }
-
+// If apiKeyAuth attached req.apiKey, we can rate-limit per key using your storage stats
+async function rateLimitByApiKey(req: any, res: any, next: any) {
   try {
-    // Get all API keys and check against bcrypt hash
-    const allKeys = await storage.getAllApiKeys();
-    let matchedKey = null;
+    const key = req.apiKey;
+    if (!key) return next();
 
-    for (const key of allKeys) {
-      if (key.isActive && await bcrypt.compare(apiKey, key.keyHash)) {
-        matchedKey = key;
-        break;
-      }
+    const stats = await storage.getApiKeyUsageStats(key.id, 1);
+    if (stats.count >= key.rateLimit) {
+      return res.status(429).json({
+        error: "Rate limit exceeded for this API key",
+        limit: key.rateLimit,
+        used: stats.count,
+        resetTime: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      });
     }
-
-    if (!matchedKey) {
-      return res.status(401).json({ error: "Invalid or inactive API key" });
-    }
-
-    // Update last used time
-    await storage.updateApiKey(matchedKey.id, { lastUsedAt: new Date() });
-
-    req.apiKey = matchedKey;
-    req.userId = matchedKey.userId;
     next();
-  } catch (error) {
-    return res.status(500).json({ error: "Authentication failed" });
+  } catch (err) {
+    console.error("Rate limiting error:", err);
+    next(); // fail-open on limiter errors
   }
 }
 
-// Middleware to authenticate JWT tokens
+// ----------------------------- JWT Middleware --------------------------------
 function authenticateToken(req: any, res: any, next: any) {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
 
   if (!token) {
     return res.status(401).json({ error: "Access token required" });
@@ -85,58 +73,25 @@ function authenticateToken(req: any, res: any, next: any) {
   });
 }
 
-// Rate limiting based on API key limits
-async function rateLimitByApiKey(req: any, res: any, next: any) {
-  if (!req.apiKey) {
-    return next();
-  }
-
-  try {
-    const stats = await storage.getApiKeyUsageStats(req.apiKey.id, 1);
-
-    if (stats.count >= req.apiKey.rateLimit) {
-      return res.status(429).json({ 
-        error: "Rate limit exceeded for this API key",
-        limit: req.apiKey.rateLimit,
-        used: stats.count,
-        resetTime: new Date(Date.now() + 60 * 60 * 1000).toISOString()
-      });
-    }
-
-    next();
-  } catch (error) {
-    console.error("Rate limiting error:", error);
-    next(); // Continue on rate limiting errors
-  }
-}
-
+// ----------------------------- Routes ----------------------------------------
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Auth routes
+  // ------------------------- Auth (email/password) ---------------------------
   app.post("/api/auth/register", async (req, res) => {
     try {
       const validatedData = registerSchema.parse(req.body);
       const { confirmPassword, ...userData } = validatedData;
 
-      // Check if user already exists
       const existingUser = await storage.getUserByEmail(userData.email);
       if (existingUser) {
         return res.status(400).json({ error: "User already exists" });
       }
 
-      // Hash password
       const hashedPassword = await bcrypt.hash(userData.password, 10);
+      const user = await storage.createUser({ ...userData, password: hashedPassword });
 
-      const user = await storage.createUser({
-        ...userData,
-        password: hashedPassword,
+      const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, {
+        expiresIn: "24h",
       });
-
-      // Generate JWT token
-      const token = jwt.sign(
-        { userId: user.id, email: user.email },
-        JWT_SECRET,
-        { expiresIn: "24h" }
-      );
 
       const { password, ...userWithoutPassword } = user;
       res.json({ user: userWithoutPassword, token });
@@ -145,7 +100,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Subscription checker (API key → user → status)
+  app.post("/api/auth/login", async (req, res) => {
+    try {
+      const { email, password } = loginSchema.parse(req.body);
+      const user = await storage.getUserByEmail(email);
+      if (!user) return res.status(401).json({ error: "Invalid credentials" });
+
+      const isValidPassword = await bcrypt.compare(password, user.password);
+      if (!isValidPassword) return res.status(401).json({ error: "Invalid credentials" });
+
+      const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, {
+        expiresIn: "24h",
+      });
+
+      const { password: _, ...userWithoutPassword } = user;
+      res.json({ user: userWithoutPassword, token });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // ------------------------- Premium Gated: Heatmap --------------------------
+  app.post("/api/v1/heatmap", apiKeyAuth, ensurePremium, async (req: Request, res: Response) => {
+    try {
+      const { url, viewport, return: ret = "base64" } = (req as any).body ?? {};
+      if (!url || typeof url !== "string") {
+        return res.status(400).json({ error: "Missing or invalid 'url' in body." });
+      }
+      if (ret !== "base64" && ret !== "url") {
+        return res.status(400).json({ error: "Invalid 'return' (use 'base64' or 'url')." });
+      }
+
+      const result = await generateHeatmap({ url, viewport, mode: ret });
+      return res.json(result);
+    } catch (err) {
+      console.error("[/api/v1/heatmap] error:", err);
+      return res.status(500).json({ error: "Failed to generate heatmap." });
+    }
+  });
+
+  // ------------------------- Subscription Checker ----------------------------
   app.get("/api/subscription", apiKeyAuth, async (req, res) => {
     try {
       const userId = (req as any).userId as string;
@@ -167,24 +161,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const now = new Date();
       const endsAt = row.periodEnd ? new Date(row.periodEnd) : null;
 
-      // ACTIVE: status active AND periodEnd in the future
       if (row.status === "active" && endsAt && endsAt.getTime() > now.getTime()) {
         const diffMs = endsAt.getTime() - now.getTime();
-        const daysRemaining = Math.floor(diffMs / (1000 * 60 * 60 * 24)); // FLOOR()
+        const daysRemaining = Math.floor(diffMs / (1000 * 60 * 60 * 24));
         return res.json({ daysRemaining });
       }
 
-      // NEVER SUBSCRIBED: no period end at all
       if (!endsAt) {
         return res.json({ message: "Subscribe at ai-lure.net" });
       }
 
-      // EXPIRED (has periodEnd but it’s in the past OR status not active)
       if (endsAt.getTime() <= now.getTime() || row.status !== "active") {
         return res.json({ message: "Subscription expired, renew at ai-lure.net" });
       }
 
-      // Fallback (very unlikely)
       return res.json({ message: "Subscribe at ai-lure.net" });
     } catch (err) {
       console.error("GET /api/subscription error:", err);
@@ -192,42 +182,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-
-  
-  app.post("/api/auth/login", async (req, res) => {
-    try {
-      const { email, password } = loginSchema.parse(req.body);
-
-      const user = await storage.getUserByEmail(email);
-      if (!user) {
-        return res.status(401).json({ error: "Invalid credentials" });
-      }
-
-      const isValidPassword = await bcrypt.compare(password, user.password);
-      if (!isValidPassword) {
-        return res.status(401).json({ error: "Invalid credentials" });
-      }
-
-      const token = jwt.sign(
-        { userId: user.id, email: user.email },
-        JWT_SECRET,
-        { expiresIn: "24h" }
-      );
-
-      const { password: _, ...userWithoutPassword } = user;
-      res.json({ user: userWithoutPassword, token });
-    } catch (error: any) {
-      res.status(400).json({ error: error.message });
-    }
-  });
-
-  // User profile routes
+  // ------------------------- User/Profile (JWT) ------------------------------
   app.get("/api/user/profile", authenticateToken, async (req: any, res) => {
     try {
       const user = await storage.getUser(req.user.userId);
-      if (!user) {
-        return res.status(404).json({ error: "User not found" });
-      }
+      if (!user) return res.status(404).json({ error: "User not found" });
 
       const { password, ...userWithoutPassword } = user;
       res.json(userWithoutPassword);
@@ -236,7 +195,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // API Key management routes
+  // ------------------------- API Keys (JWT) ----------------------------------
   app.get("/api/keys", authenticateToken, async (req: any, res) => {
     try {
       const apiKeys = await storage.getApiKeysByUserId(req.user.userId);
@@ -246,12 +205,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  /**
-   * CREATE API KEY
-   * - generates a new plaintext key (returned ONCE)
-   * - stores only a bcrypt hash + a displayable prefix
-   * - returns a safe payload without keyHash leakage
-   */
   app.post("/api/keys", authenticateToken, async (req: any, res) => {
     try {
       const validatedData = insertApiKeySchema.parse({
@@ -259,51 +212,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
         userId: req.user.userId,
       });
 
-      // Generate plaintext key: ai_lure_<8-hex>_<url-safe-body>
-      const keyPrefixHex = crypto.randomBytes(4).toString("hex");     // 8 chars
-      const body = crypto.randomBytes(24).toString("base64url");       // ~32 url-safe
+      const keyPrefixHex = crypto.randomBytes(4).toString("hex"); // 8 chars
+      const body = crypto.randomBytes(24).toString("base64url");   // ~32 url-safe
       const plaintextKey = `ai_lure_${keyPrefixHex}_${body}`;
 
-      // Hash for storage
       const keyHash = await bcrypt.hash(plaintextKey, 12);
-
-      // What we keep for display in lists (no secret)
       const displayPrefix = `ai_lure_${keyPrefixHex}`;
 
-      // Save to storage (DO NOT return keyHash to client)
       const created = await storage.createApiKey({
         ...validatedData,
         keyHash,
         keyPrefix: displayPrefix,
       });
 
-      // Build a safe response object (omit keyHash entirely)
       const {
-        id,
-        userId,
-        name,
-        rateLimit,
-        isActive,
-        keyPrefix,
-        createdAt,
-        lastUsedAt,
+        id, userId, name, rateLimit, isActive, keyPrefix, createdAt, lastUsedAt,
       } = created;
 
       res.status(201).json({
-        // plaintext ONCE (for the UI modal)
-        apiKey: plaintextKey,
-
-        // convenient fields for your UI/toast
+        apiKey: plaintextKey, // shown once
         name,
-
-        // non-sensitive metadata you already show in the list
-        id,
-        userId,
-        rateLimit,
-        isActive,
-        keyPrefix,
-        createdAt,
-        lastUsedAt,
+        id, userId, rateLimit, isActive, keyPrefix, createdAt, lastUsedAt,
       });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -316,7 +245,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!apiKey || apiKey.userId !== req.user.userId) {
         return res.status(404).json({ error: "API key not found" });
       }
-
       await storage.deleteApiKey(req.params.id);
       res.json({ success: true });
     } catch (error: any) {
@@ -330,7 +258,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!apiKey || apiKey.userId !== req.user.userId) {
         return res.status(404).json({ error: "API key not found" });
       }
-
       const updatedKey = await storage.updateApiKey(req.params.id, req.body);
       res.json(updatedKey);
     } catch (error: any) {
@@ -338,28 +265,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Dashboard stats
-  app.get("/api/dashboard/stats", authenticateToken, async (req: any, res) => {
-    try {
-      const stats = await storage.getUserDashboardStats(req.user.userId);
-      res.json(stats);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // Request logs
-  app.get("/api/request-logs", authenticateToken, async (req: any, res) => {
-    try {
-      const limit = parseInt(req.query.limit as string) || 100;
-      const logs = await storage.getRequestLogsByUserId(req.user.userId, limit);
-      res.json(logs);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // Integrations
+  // ------------------------- Demo Integrations (JWT) -------------------------
   app.get("/api/integrations", authenticateToken, async (req: any, res) => {
     try {
       const integrations = await storage.getIntegrationsByUserId(req.user.userId);
@@ -371,173 +277,168 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/integrations", authenticateToken, async (req: any, res) => {
     try {
-      const validatedData = insertIntegrationSchema.parse({
+      const validatedData = /* insertIntegrationSchema */ {
         ...req.body,
         userId: req.user.userId,
-      });
-
-      const integration = await storage.createIntegration(validatedData);
+      };
+      const integration = await storage.createIntegration(validatedData as any);
       res.json(integration);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
   });
 
-  // Helper function for weather integration
-  async function getWeatherData(location: string) {
-    try {
-      // Using a free weather API (no key required for basic usage)
-      const response = await fetch(`https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(location)}&appid=demo&units=metric`);
-      if (!response.ok) {
-        // Fallback to mock data if API fails
-        return {
-          location,
-          temperature: Math.round(Math.random() * 30 + 5), // Random temp 5-35°C
-          condition: ["sunny", "cloudy", "rainy"][Math.floor(Math.random() * 3)],
-          humidity: Math.round(Math.random() * 100),
-          source: "mock_fallback"
-        };
-      }
-      const data = await response.json();
-      return {
-        location: data.name,
-        temperature: Math.round(data.main.temp),
-        condition: data.weather[0].main.toLowerCase(),
-        humidity: data.main.humidity,
-        source: "openweathermap"
-      };
-    } catch (error) {
-      // Return mock data on error
-      return {
-        location,
-        temperature: Math.round(Math.random() * 30 + 5),
-        condition: ["sunny", "cloudy", "rainy"][Math.floor(Math.random() * 3)],
-        humidity: Math.round(Math.random() * 100),
-        source: "mock_fallback",
-        error: "API unavailable"
-      };
-    }
-  }
+  // ------------------------- Orchestrate (API key) ---------------------------
+  // NOTE: Use the unified apiKeyAuth + your per-key limiter
+  app.post(
+    "/api/v1/orchestrate",
+    apiLimiter,
+    apiKeyAuth,
+    rateLimitByApiKey,
+    async (req: any, res) => {
+      const startTime = Date.now();
+      let statusCode = 200;
+      let errorMessage: string | null = null;
 
-  // Helper function for news integration
-  async function getNewsData(category: string = "general") {
-    // Mock news data since real news APIs require keys
-    const mockNews = [
-      { title: "Tech Innovation Reaches New Heights", source: "TechNews", category: "technology" },
-      { title: "Global Markets Show Positive Trends", source: "FinanceDaily", category: "business" },
-      { title: "Climate Summit Announces New Initiatives", source: "EnviroUpdate", category: "environment" },
-      { title: "Healthcare Breakthrough in AI Diagnostics", source: "MedNews", category: "health" },
-    ];
+      try {
+        const { integrations, data } = req.body;
 
-    return {
-      category,
-      articles: mockNews.filter(article => article.category === category || category === "general").slice(0, 3),
-      count: 3,
-      source: "mock_news_api"
-    };
-  }
+        if (!integrations || !Array.isArray(integrations)) {
+          statusCode = 400;
+          throw new Error("integrations array is required");
+        }
 
-  // Main API orchestration endpoint
-  app.post("/api/v1/orchestrate", apiLimiter, authenticateApiKey, rateLimitByApiKey, async (req, res) => {
-    const startTime = Date.now();
-    let statusCode = 200;
-    let errorMessage = null;
-
-    try {
-      const { integrations, data } = req.body;
-
-      if (!integrations || !Array.isArray(integrations)) {
-        statusCode = 400;
-        throw new Error("integrations array is required");
-      }
-
-      // Process each integration
-      const results = await Promise.all(
-        integrations.map(async (integration: string) => {
+        // demo helpers
+        async function getWeatherData(location: string) {
           try {
-            let integrationData;
-
-            switch (integration.toLowerCase()) {
-              case "weather":
-                const location = data?.location || "San Francisco";
-                integrationData = await getWeatherData(location);
-                break;
-
-              case "news":
-                const category = data?.category || "general";
-                integrationData = await getNewsData(category);
-                break;
-
-              case "hello":
-                integrationData = {
-                  message: "Hello from AI-lure Orchestrator!",
-                  timestamp: new Date().toISOString(),
-                  user: req.apiKey.name || "API User"
-                };
-                break;
-
-              default:
-                integrationData = {
-                  message: `Integration '${integration}' is not yet implemented`,
-                  available_integrations: ["weather", "news", "hello"]
-                };
+            const response = await fetch(
+              `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(
+                location
+              )}&appid=demo&units=metric`
+            );
+            if (!response.ok) {
+              return {
+                location,
+                temperature: Math.round(Math.random() * 30 + 5),
+                condition: ["sunny", "cloudy", "rainy"][Math.floor(Math.random() * 3)],
+                humidity: Math.round(Math.random() * 100),
+                source: "mock_fallback",
+              };
             }
-
+            const data = await response.json();
             return {
-              integration,
-              status: "success",
-              data: integrationData,
+              location: data.name,
+              temperature: Math.round(data.main.temp),
+              condition: data.weather[0].main.toLowerCase(),
+              humidity: data.main.humidity,
+              source: "openweathermap",
             };
-          } catch (error: any) {
+          } catch {
             return {
-              integration,
-              status: "error",
-              error: error.message,
+              location,
+              temperature: Math.round(Math.random() * 30 + 5),
+              condition: ["sunny", "cloudy", "rainy"][Math.floor(Math.random() * 3)],
+              humidity: Math.round(Math.random() * 100),
+              source: "mock_fallback",
+              error: "API unavailable",
             };
           }
-        })
-      );
+        }
 
-      const response = {
-        success: true,
-        timestamp: new Date().toISOString(),
-        requestId: crypto.randomUUID(),
-        apiKey: req.apiKey.name,
-        results,
-      };
+        async function getNewsData(category: string = "general") {
+          const mockNews = [
+            { title: "Tech Innovation Reaches New Heights", source: "TechNews", category: "technology" },
+            { title: "Global Markets Show Positive Trends", source: "FinanceDaily", category: "business" },
+            { title: "Climate Summit Announces New Initiatives", source: "EnviroUpdate", category: "environment" },
+            { title: "Healthcare Breakthrough in AI Diagnostics", source: "MedNews", category: "health" },
+          ];
+          return {
+            category,
+            articles: mockNews
+              .filter((a) => a.category === category || category === "general")
+              .slice(0, 3),
+            count: 3,
+            source: "mock_news_api",
+          };
+        }
 
-      // Log the request
-      await storage.createRequestLog({
-        apiKeyId: req.apiKey.id,
-        endpoint: "/api/v1/orchestrate",
-        method: "POST",
-        statusCode,
-        responseTime: Date.now() - startTime,
-        requestBody: req.body,
-        responseBody: response,
-        errorMessage,
-      });
+        const results = await Promise.all(
+          integrations.map(async (integration: string) => {
+            try {
+              let integrationData;
+              switch (integration.toLowerCase()) {
+                case "weather": {
+                  const location = req.body?.data?.location || "San Francisco";
+                  integrationData = await getWeatherData(location);
+                  break;
+                }
+                case "news": {
+                  const category = req.body?.data?.category || "general";
+                  integrationData = await getNewsData(category);
+                  break;
+                }
+                case "hello": {
+                  integrationData = {
+                    message: "Hello from AI-lure Orchestrator!",
+                    timestamp: new Date().toISOString(),
+                    user: req.apiKey.name || "API User",
+                  };
+                  break;
+                }
+                default: {
+                  integrationData = {
+                    message: `Integration '${integration}' is not yet implemented`,
+                    available_integrations: ["weather", "news", "hello"],
+                  };
+                }
+              }
 
-      res.json(response);
-    } catch (error: any) {
-      statusCode = error.status || 500;
-      errorMessage = error.message;
+              return { integration, status: "success", data: integrationData };
+            } catch (err: any) {
+              return { integration, status: "error", error: err.message };
+            }
+          })
+        );
 
-      // Log the error
-      await storage.createRequestLog({
-        apiKeyId: req.apiKey?.id,
-        endpoint: "/api/v1/orchestrate",
-        method: "POST",
-        statusCode,
-        responseTime: Date.now() - startTime,
-        requestBody: req.body,
-        responseBody: null,
-        errorMessage,
-      });
+        const responsePayload = {
+          success: true,
+          timestamp: new Date().toISOString(),
+          requestId: crypto.randomUUID(),
+          apiKey: req.apiKey.name,
+          results,
+        };
 
-      res.status(statusCode).json({ error: errorMessage });
+        await storage.createRequestLog({
+          apiKeyId: req.apiKey.id,
+          endpoint: "/api/v1/orchestrate",
+          method: "POST",
+          statusCode,
+          responseTime: Date.now() - startTime,
+          requestBody: req.body,
+          responseBody: responsePayload,
+          errorMessage,
+        });
+
+        res.json(responsePayload);
+      } catch (error: any) {
+        statusCode = error.status || 500;
+        errorMessage = error.message;
+
+        await storage.createRequestLog({
+          apiKeyId: req.apiKey?.id,
+          endpoint: "/api/v1/orchestrate",
+          method: "POST",
+          statusCode,
+          responseTime: Date.now() - startTime,
+          requestBody: req.body,
+          responseBody: null,
+          errorMessage,
+        });
+
+        res.status(statusCode).json({ error: errorMessage });
+      }
     }
-  });
+  );
 
   const httpServer = createServer(app);
   return httpServer;

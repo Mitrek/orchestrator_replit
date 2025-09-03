@@ -111,8 +111,8 @@ export default function Dashboard({ user }: { user: User | null }) {
             value={stats?.activeKeys ?? 0}
             description="Active API Keys"
             icon={Key}
-            change="+12%"
-            changeType="positive"
+            change="Coming soon"
+            changeType="neutral"
             iconBgColor="bg-primary/10 text-primary"
           />
           <StatsCard
@@ -120,8 +120,8 @@ export default function Dashboard({ user }: { user: User | null }) {
             value={stats?.totalRequests ?? 0}
             description="Requests Today"
             icon={Activity}
-            change="+8%"
-            changeType="positive"
+            change="Coming soon"
+            changeType="neutral"
             iconBgColor="bg-secondary/10 text-secondary"
           />
           <StatsCard
@@ -129,8 +129,8 @@ export default function Dashboard({ user }: { user: User | null }) {
             value={(stats?.avgResponseTime ?? 0) + "ms"}
             description="Avg Response Time"
             icon={Clock}
-            change="-3ms"
-            changeType="positive"
+            change="Coming soon"
+            changeType="neutral"
             iconBgColor="bg-accent/10 text-accent"
           />
           <StatsCard
@@ -138,8 +138,8 @@ export default function Dashboard({ user }: { user: User | null }) {
             value={(stats?.errorRate ?? 0) + "%"}
             description="Error Rate"
             icon={AlertTriangle}
-            change="-0.1%"
-            changeType="positive"
+            change="Coming soon"
+            changeType="neutral"
             iconBgColor="bg-destructive/10 text-destructive"
           />
         </div>
@@ -165,8 +165,8 @@ export default function Dashboard({ user }: { user: User | null }) {
                       <ApiKeyCard
                         key={apiKey.id}
                         apiKey={apiKey}
-                        usageCount={Math.floor(Math.random() * 500)} // Mock usage data
-                        usagePercentage={Math.random() * 50}
+                        usageCount="Coming soon"
+                        usagePercentage="Coming soon"
                         // Pass the full apiKey to ApiKeyCard so it can be copied
                         fullApiKey={(apiKey as any).key}
                       />

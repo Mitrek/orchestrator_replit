@@ -93,7 +93,7 @@ export default function Analytics({ user }: { user: User | null }) {
             </CardHeader>
             <CardContent>
               <div className="h-64 flex items-center justify-center bg-muted rounded-lg">
-                <p className="text-muted-foreground">Chart coming soon</p>
+                <p className="text-muted-foreground">Coming soon</p>
               </div>
             </CardContent>
           </Card>
@@ -107,7 +107,7 @@ export default function Analytics({ user }: { user: User | null }) {
             </CardHeader>
             <CardContent>
               <div className="h-64 flex items-center justify-center bg-muted rounded-lg">
-                <p className="text-muted-foreground">Chart coming soon</p>
+                <p className="text-muted-foreground">Coming soon</p>
               </div>
             </CardContent>
           </Card>
@@ -122,7 +122,7 @@ export default function Analytics({ user }: { user: User | null }) {
           </CardHeader>
           <CardContent>
             <div className="h-48 flex items-center justify-center bg-muted rounded-lg">
-              <p className="text-muted-foreground">Error analysis coming soon</p>
+              <p className="text-muted-foreground">Coming soon</p>
             </div>
           </CardContent>
         </Card>

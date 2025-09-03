@@ -34,7 +34,7 @@ export function StatsCard({
             <Icon className="w-5 h-5" />
           </div>
           {change && (
-            <span 
+            <span
               className={`text-xs font-medium px-2 py-1 rounded-full ${changeColorMap[changeType]}`}
               data-testid={`stats-change-${title.toLowerCase().replace(/\s+/g, '-')}`}
             >
@@ -42,7 +42,7 @@ export function StatsCard({
             </span>
           )}
         </div>
-        <h3 
+        <h3
           className="text-2xl font-semibold text-foreground mb-1"
           data-testid={`stats-value-${title.toLowerCase().replace(/\s+/g, '-')}`}
         >

@@ -1,14 +1,21 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { Layout } from "@/components/layout/layout";
 import { StatsCard } from "@/components/dashboard/stats-card";
 import { ApiKeyCard } from "@/components/dashboard/api-key-card";
 import { ActivityFeed } from "@/components/dashboard/activity-feed";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { User, ApiKey, RequestLog } from "@shared/schema";
-import { Key, Activity, Clock, AlertTriangle, Plus, Download, Book, Plug, Play } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
+import { User, ApiKey, RequestLog, InsertApiKey, insertApiKeySchema } from "@shared/schema";
+import { Key, Activity, Clock, AlertTriangle, Plus, Download, Book, Play, Copy } from "lucide-react";
 import { getAuthToken } from "@/lib/auth";
-import React, { useState } from "react"; // Import React and useState
+import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import React, { useState } from "react";
 
 interface DashboardStats {
   activeKeys: number;
@@ -19,7 +26,11 @@ interface DashboardStats {
 
 export default function Dashboard({ user }: { user: User | null }) {
   const token = getAuthToken();
-  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false); // State for dialog
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [showKeyDialog, setShowKeyDialog] = useState(false);
+  const [apiKeyPlain, setApiKeyPlain] = useState<string | null>(null);
 
   const { data: stats, isLoading: statsLoading } = useQuery<DashboardStats>({
     queryKey: ["/api/dashboard/stats"],
@@ -36,31 +47,61 @@ export default function Dashboard({ user }: { user: User | null }) {
     enabled: !!token,
   });
 
-  // Function to handle creating a new API key
-  const handleCreateApiKey = async () => {
-    try {
-      const response = await fetch("/api/keys", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          name: `Dashboard Key ${Date.now()}`,
-          rateLimit: 1000,
-        }),
-      });
+  const form = useForm<InsertApiKey>({
+    resolver: zodResolver(insertApiKeySchema.omit({ userId: true })),
+    defaultValues: {
+      name: "",
+      rateLimit: 1000,
+      isActive: true,
+    },
+  });
 
-      if (response.ok) {
-        await response.json();
-        // Refresh the API keys list
-        window.location.reload();
-        setIsCreateDialogOpen(false);
-      } else {
-        console.error("Failed to create API key");
+  const createApiKeyMutation = useMutation({
+    mutationFn: async (data: InsertApiKey) => {
+      const response = await apiRequest("POST", "/api/keys", data);
+      return response.json() as Promise<{ apiKey?: string; name?: string }>;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/keys"] });
+      setIsCreateDialogOpen(false);
+      form.reset();
+      
+      if (data.apiKey) {
+        setApiKeyPlain(data.apiKey);
+        setShowKeyDialog(true);
+        toast({
+          title: "API Key Created",
+          description: "Your new API key has been generated. Make sure to copy it now!",
+        });
       }
-    } catch (error) {
-      console.error("Error creating API key:", error);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to create API key",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleCreateApiKey = (data: InsertApiKey) => {
+    createApiKeyMutation.mutate(data);
+  };
+
+  const copyKey = async () => {
+    if (!apiKeyPlain) return;
+    try {
+      await navigator.clipboard.writeText(apiKeyPlain);
+      toast({
+        title: "Copied",
+        description: "Your API key has been copied to the clipboard.",
+      });
+    } catch (e: any) {
+      toast({
+        title: "Copy failed",
+        description: e?.message ?? "Could not copy to clipboard.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -89,7 +130,7 @@ export default function Dashboard({ user }: { user: User | null }) {
               API Dashboard
             </h2>
             <p className="text-muted-foreground">
-              Manage your API keys, monitor usage, and orchestrate third-party integrations
+              Manage your API keys and monitor usage
             </p>
           </div>
           <div className="flex items-center space-x-3 mt-4 sm:mt-0">
@@ -167,8 +208,6 @@ export default function Dashboard({ user }: { user: User | null }) {
                         apiKey={apiKey}
                         usageCount="Coming soon"
                         usagePercentage="Coming soon"
-                        // Pass the full apiKey to ApiKeyCard so it can be copied
-                        fullApiKey={(apiKey as any).key}
                       />
                     ))}
                   </div>
@@ -213,19 +252,7 @@ export default function Dashboard({ user }: { user: User | null }) {
                   </div>
                 </Button>
 
-                <Button
-                  variant="outline"
-                  className="w-full justify-start"
-                  data-testid="action-add-integration"
-                >
-                  <div className="w-8 h-8 bg-secondary/10 rounded-lg flex items-center justify-center mr-3">
-                    <Plug className="w-4 h-4 text-secondary" />
-                  </div>
-                  <div className="text-left">
-                    <p className="font-medium">Add Integration</p>
-                    <p className="text-sm text-muted-foreground">Connect third-party API</p>
-                  </div>
-                </Button>
+                
 
                 <Button
                   variant="outline"
@@ -318,21 +345,91 @@ export default function Dashboard({ user }: { user: User | null }) {
         </Card>
       </div>
 
-      {/* Placeholder for the API Key creation dialog */}
-      {/* This would typically be a modal component */}
-      {isCreateDialogOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-          <div className="bg-white p-6 rounded-lg shadow-lg">
-            <h2 className="text-lg font-semibold mb-4">Create New API Key</h2>
-            {/* Add your API key creation form here */}
-            <p>API Key creation form goes here...</p>
-            <div className="mt-4 flex justify-end space-x-2">
-              <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>Cancel</Button>
-              <Button onClick={handleCreateApiKey}>Create Key</Button>
-            </div>
+      {/* Create API Key Dialog */}
+      <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Create New API Key</DialogTitle>
+            <DialogDescription>
+              Generate a new API key for accessing the platform. You can set a custom rate limit and name.
+            </DialogDescription>
+          </DialogHeader>
+
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(handleCreateApiKey)} className="space-y-4">
+              <FormField
+                control={form.control}
+                name="name"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Key Name</FormLabel>
+                    <FormControl>
+                      <Input placeholder="My API Key" {...field} data-testid="input-api-key-name" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="rateLimit"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Rate Limit (requests per hour)</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        min="1"
+                        max="10000"
+                        {...field}
+                        onChange={(e) => field.onChange(parseInt(e.target.value) || 0)}
+                        data-testid="input-rate-limit"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <div className="flex justify-end space-x-2">
+                <Button type="button" variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={createApiKeyMutation.isPending} data-testid="button-submit-create-key">
+                  {createApiKeyMutation.isPending ? "Creating..." : "Create Key"}
+                </Button>
+              </div>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
+
+      {/* One-time API key display dialog */}
+      <Dialog
+        open={showKeyDialog}
+        onOpenChange={(open) => {
+          if (!open) setApiKeyPlain(null);
+          setShowKeyDialog(open);
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Your new API key</DialogTitle>
+            <DialogDescription>
+              This key is shown <strong>only once</strong>. Copy and store it securely — you won't be able to see it again.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="mt-4 flex items-center gap-2">
+            <Input readOnly value={apiKeyPlain ?? ""} onFocus={(e) => e.currentTarget.select()} />
+            <Button variant="secondary" onClick={copyKey} disabled={!apiKeyPlain} data-testid="copy-api-key">
+              <Copy className="h-4 w-4 mr-2" />
+              Copy
+            </Button>
           </div>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
     </Layout>
   );
 }

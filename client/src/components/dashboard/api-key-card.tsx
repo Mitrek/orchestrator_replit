@@ -8,8 +8,8 @@ import { useToast } from "@/hooks/use-toast";
 interface ApiKeyCardProps {
   apiKey: ApiKey;
   onRegenerate?: (id: string) => void;
-  usageCount?: number;
-  usagePercentage?: number;
+  usageCount?: number | string;
+  usagePercentage?: number | string;
   fullKey?: string; // Optional full key (only available right after creation)
 }
 
@@ -112,7 +112,7 @@ export function ApiKeyCard({
             Rate limit: {apiKey.rateLimit?.toLocaleString() || 1000} req/hour
           </span>
           <span className="text-muted-foreground" data-testid={`api-key-usage-${apiKey.id}`}>
-            Used: {usageCount} ({usagePercentage.toFixed(1)}%)
+            Used: {usageCount} ({typeof usagePercentage === 'number' ? usagePercentage.toFixed(1) + '%' : usagePercentage})
           </span>
         </div>
       </CardContent>

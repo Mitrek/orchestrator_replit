@@ -146,10 +146,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const { generateHeatmap } = await import("./services/heatmap");
       const result = await generateHeatmap({ url, viewport, mode: ret });
+      
+      // Check if we got the fallback tiny image, which indicates an error
+      const tinyPngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/ea8ZbsAAAAASUVORK5CYII=";
+      if (result.base64?.includes(tinyPngBase64) || result.url?.includes(tinyPngBase64)) {
+        return res.status(500).json({ 
+          error: "Failed to generate heatmap - system dependencies missing or Puppeteer error",
+          details: "Browser process failed to launch"
+        });
+      }
+      
       return res.json(result);
     } catch (err) {
       console.error("[/api/v1/heatmap] error:", err);
-      return res.status(500).json({ error: "Failed to generate heatmap." });
+      return res.status(500).json({ 
+        error: "Failed to generate heatmap",
+        details: err instanceof Error ? err.message : "Unknown error"
+      });
     }
   });
 

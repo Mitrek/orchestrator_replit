@@ -19,7 +19,7 @@ delete (neonConfig as any).wsProxy;
 delete (neonConfig as any).webSocketProxy;
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));  // or 20mb if you prefer
 app.use(express.urlencoded({ extended: false }));
 
 // ✅ /health route — lightweight readiness check

@@ -1,6 +1,6 @@
 // FILE: server/routes.ts
 import { createServer, type Server } from "http";
-import type { Express, Request, Response } from "express";
+import type { Express } from "express";
 
 import crypto from "crypto";
 import bcrypt from "bcrypt";
@@ -19,21 +19,18 @@ import { db, withDbRetry } from "./db";
 import { eq } from "drizzle-orm";
 
 import { apiKeyAuth } from "./middleware/apiKeyAuth";
-import { ensurePremium } from "./middleware/ensurePremium";
-import { generateHeatmap } from "./services/heatmap";
 import { perIpLimiter, requestTimeout } from "./middleware/limits";
-import { postHeatmapStub, postHeatmapDataStub } from "./controllers/heatmap";
 import { makeDummyPngBase64 } from "./services/imaging";
 import { postHeatmapScreenshot } from "./controllers/heatmap.screenshot";
+import { diagPuppeteerLaunch } from "./controllers/puppeteer.diagnostics";
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
-import { diagPuppeteerLaunch } from "./controllers/puppeteer.diagnostics";
 
 // ----------------------------- Rate Limiting ---------------------------------
 const apiLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 1000,
-  message: { error: "Rate limit exceeded" },
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  message: { error: "Too many requests, please try again later." },
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -81,7 +78,7 @@ function authenticateToken(req: any, res: any, next: any) {
 // ----------------------------- Routes ----------------------------------------
 export async function registerRoutes(app: Express): Promise<Server> {
   // ------------------------- Auth (email/password) ---------------------------
-  app.post("/api/auth/register", async (req, res) => {
+  app.post("/api/auth/register", apiLimiter, async (req, res) => {
     try {
       const validatedData = registerSchema.parse(req.body);
       const { confirmPassword, ...userData } = validatedData;
@@ -112,7 +109,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/auth/login", async (req, res) => {
+  app.post("/api/auth/login", apiLimiter, async (req, res) => {
     try {
       const { email, password } = loginSchema.parse(req.body);
       const user = await storage.getUserByEmail(email);
@@ -137,81 +134,83 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // ------------------------- Heatmap (Phase 1 stubs) -------------------------
+  // ------------------------- Heatmap (API) -------------------------
+  // Main endpoint uses screenshot
   app.post(
     "/api/v1/heatmap",
     perIpLimiter,
-    requestTimeout(15_000),
+    requestTimeout(45_000), // give Chromium time; 45s is safe
     postHeatmapScreenshot,
   );
 
+  // Keep a separate debug route if you like
   app.post(
-    "/api/v1/heatmap/data",
+    "/api/v1/heatmap/screenshot",
     perIpLimiter,
-    requestTimeout(15_000),
-    postHeatmapDataStub,
+    requestTimeout(45_000),
+    postHeatmapScreenshot,
   );
 
-  // Heatmap routes
   app.get("/api/v1/heatmap/dummy", (_req, res) => {
     res.json({ image: makeDummyPngBase64() });
   });
-
-  // Add the missing POST routes
-  app.post("/api/v1/heatmap", postHeatmapScreenshot);
-  app.post("/api/v1/heatmap/screenshot", postHeatmapScreenshot);
 
   // Puppeteer diagnostics
   app.get("/api/v1/puppeteer/launch", diagPuppeteerLaunch);
 
   // ------------------------- Subscription Checker ----------------------------
-  app.get("/api/subscription", apiKeyAuth, async (req, res) => {
-    try {
-      const userId = (req as any).userId as string;
-      if (!userId) return res.status(401).json({ error: "Unauthorized" });
+  app.get(
+    "/api/subscription",
+    apiKeyAuth,
+    rateLimitByApiKey,
+    async (req, res) => {
+      try {
+        const userId = (req as any).userId as string;
+        if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
-      const [row] = await withDbRetry(() =>
-        db
-          .select({
-            status: users.subscriptionStatus,
-            periodEnd: users.currentPeriodEnd,
-          })
-          .from(users)
-          .where(eq(users.id, userId))
-          .limit(1),
-      );
+        const [row] = await withDbRetry(() =>
+          db
+            .select({
+              status: users.subscriptionStatus,
+              periodEnd: users.currentPeriodEnd,
+            })
+            .from(users)
+            .where(eq(users.id, userId))
+            .limit(1),
+        );
 
-      if (!row) return res.status(404).json({ error: "User not found" });
+        if (!row) return res.status(404).json({ error: "User not found" });
 
-      const now = new Date();
-      const endsAt = row.periodEnd ? new Date(row.periodEnd) : null;
+        const now = new Date();
+        const endsAt = row.periodEnd ? new Date(row.periodEnd) : null;
 
-      if (
-        row.status === "active" &&
-        endsAt &&
-        endsAt.getTime() > now.getTime()
-      ) {
-        const diffMs = endsAt.getTime() - now.getTime();
-        const daysRemaining = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-        return res.json({ daysRemaining });
-      }
+        if (
+          row.status === "active" &&
+          endsAt &&
+          endsAt.getTime() > now.getTime()
+        ) {
+          const diffMs = endsAt.getTime() - now.getTime();
+          const daysRemaining = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+          return res.json({ daysRemaining });
+        }
 
-      if (!endsAt) {
+        if (!endsAt) {
+          return res.json({ message: "Subscribe at ai-lure.net" });
+        }
+
+        if (endsAt.getTime() <= now.getTime() || row.status !== "active") {
+          return res.json({
+            message: "Subscription expired, renew at ai-lure.net",
+          });
+        }
+
         return res.json({ message: "Subscribe at ai-lure.net" });
+      } catch (err) {
+        console.error("GET /api/subscription error:", err);
+        res.status(500).json({ error: "Internal server error" });
       }
-
-      if (endsAt.getTime() <= now.getTime() || row.status !== "active") {
-        return res.json({
-          message: "Subscription expired, renew at ai-lure.net",
-        });
-      }
-
-      return res.json({ message: "Subscribe at ai-lure.net" });
-    } catch (err) {
-      console.error("GET /api/subscription error:", err);
-      res.status(500).json({ error: "Internal server error" });
-    }
-  });
+    },
+  );
 
   // ------------------------- User/Profile (JWT) ------------------------------
   app.get("/api/user/profile", authenticateToken, async (req: any, res) => {

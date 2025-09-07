@@ -16,7 +16,16 @@ export const baseHeatmapSchema = z.object({
  * Schema for /api/v1/heatmap (AI-assisted).
  * Only needs the base fields for now.
  */
-export const heatmapRequestSchema = baseHeatmapSchema;
+// server/schemas/heatmap.ts
+export const heatmapRequestSchema = z.object({
+  url: z.string().url(),
+  device: z.enum(["desktop", "tablet", "mobile"]).optional().default("desktop"),
+  returnMode: z.enum(["base64", "url"]).optional().default("base64"),
+  // NEW - optional
+  fullPage: z.boolean().optional().default(false),
+  provider: z.enum(["chromium","thumio","screenshotmachine"]).optional()
+});
+
 
 /**
  * Schema for /api/v1/heatmap/data (data-driven).
@@ -38,3 +47,4 @@ export const heatmapDataRequestSchema = baseHeatmapSchema.extend({
 // Inferred TypeScript types (optional but recommended)
 export type HeatmapRequest = z.infer<typeof heatmapRequestSchema>;
 export type HeatmapDataRequest = z.infer<typeof heatmapDataRequestSchema>;
+

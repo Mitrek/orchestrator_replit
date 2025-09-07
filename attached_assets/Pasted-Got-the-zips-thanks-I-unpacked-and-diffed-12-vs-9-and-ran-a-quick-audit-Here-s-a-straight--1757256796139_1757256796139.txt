@@ -1,0 +1,218 @@
+Got the zips—thanks! I unpacked and diffed `(12)` vs `(9)` and ran a quick audit. Here’s a straight, actionable brief you can paste to your Replit assistant.
+
+# What went wrong (root-cause summary)
+
+1. Incomplete/garbled server file
+
+* `server/services/heatmap.ts` in **(12)** contains literal `...` truncations, so it won’t transpile or import. That alone breaks `/api/v1/heatmap`.
+
+  * Symptom: dynamic import in `app-routes.ts` (`import("./services/heatmap")`) throws, and your route returns the tiny 1×1 PNG fallback or a 500.
+
+2. API contract mismatch (confusing `mode`)
+
+* Route (`/api/v1/heatmap`) validates `mode` as `["desktop","mobile","tablet"]`, but `generateHeatmap()` expects `mode` `"base64" | "url"`.
+
+  * Effect: the “device” choice never influences viewport, and the “return format” is never selected intentionally.
+
+3. Missing implementation for data-driven endpoint
+
+* Route calls `generateDataHeatmap()` but there’s **no** export with that name in `services/heatmap.ts`. 500 on `/api/v1/heatmap/data`.
+
+4. Puppeteer + environment assumptions
+
+* You’re using `puppeteer` (bundled Chromium), but Replit/containers can fail to launch without proper flags. Your generator does pass many flags (good), but you must ensure:
+
+  * dependency is `puppeteer` (not `puppeteer-core`) **and**
+  * no sandbox issues (`--no-sandbox`) & `--disable-dev-shm-usage` are present (they are), **and**
+  * the server actually calls this code (see #1 and #3).
+
+5. Canvas library drift
+
+* In `server/services/heatmapGenerator.js` you import `@napi-rs/canvas` (great for Linux), but your attached asset copies also reference `canvas`. Mixing those will crash at runtime. Keep it **one**: `@napi-rs/canvas`.
+
+6. OpenAI call consistency
+
+* In previous attempts you hit “Unsupported parameter: `response_format` (Responses API)”. In the current generator you’re using **Chat Completions** with `response_format: { type: "json_object" }`, which is valid there. Make sure you **do not** switch to the Responses API without adjusting to `text.format = "json"`.
+
+7. Client integration gap
+
+* I couldn’t find any client code in **(12)** that actually hits `/api/v1/heatmap` and renders the PNG. Static folder `/public/heatmaps` is wired in `server/index.ts`, but nothing triggers generation from the UI.
+
+# Clean-slate instructions (tell Replit exactly this)
+
+**Goal:** Re-implement a minimal, reliable heatmap feature with two endpoints, one AI-assisted and one data-driven, keeping Puppeteer stable on Replit and returning a base64 PNG by default.
+
+---
+
+## 1) Dependencies (keep them consistent)
+
+```bash
+npm i puppeteer @napi-rs/canvas openai pino
+```
+
+* **Use `@napi-rs/canvas` everywhere** (no `canvas`).
+* Keep `puppeteer` (not core) so Chromium is bundled.
+
+## 2) Service module (replace the broken file)
+
+Create **`server/services/heatmap.ts`** (complete, no ellipses), exporting both functions:
+
+* `generateHeatmap({ url, device, returnMode })`
+
+  * `device`: `"desktop" | "tablet" | "mobile"` → sets viewport.
+  * `returnMode`: `"base64" | "url"` → how we respond.
+  * Steps: launch Puppeteer → remove noisy overlays → screenshot → DOM extract → call OpenAI (chat.completions, model `gpt-4o-mini`) with `response_format: { type: "json_object" }` → verify hotspots → render with `@napi-rs/canvas` → write `public/heatmaps/heatmap-<ts>.png` → return `{ base64 | url, meta }`.
+
+* `generateDataHeatmap({ url, dataPoints, device, returnMode })`
+
+  * `dataPoints`: normalized `{ x: 0..1, y: 0..1, type?: "move"|"click" }[]`.
+  * Steps: same screenshot path, but render heatmap from provided points (no OpenAI).
+
+**Puppeteer launch:**
+
+```ts
+const browser = await puppeteer.launch({
+  headless: "new",
+  args: [
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-dev-shm-usage",
+    "--disable-gpu",
+    "--disable-extensions",
+    "--disable-web-security",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--disable-background-timer-throttling",
+    "--disable-renderer-backgrounding",
+    "--disable-backgrounding-occluded-windows"
+  ]
+});
+```
+
+**Canvas import:**
+
+```ts
+import { createCanvas, loadImage } from "@napi-rs/canvas";
+```
+
+**OpenAI call (Chat Completions, JSON output):**
+
+```ts
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+const response = await openai.chat.completions.create({
+  model: "gpt-4o-mini",
+  messages: [
+    { role: "system", content: "You are an expert in web design and eye-tracking patterns." },
+    { role: "user", content: promptString }
+  ],
+  temperature: 0.3,
+  max_tokens: 1000,
+  response_format: { type: "json_object" }
+});
+const result = JSON.parse(response.choices[0].message.content!);
+```
+
+**Rendering notes:**
+
+* Fade unviewed area with a semi-opaque overlay down to the max scroll (if using session data).
+* Build a heat canvas and colorize via a simple blue→cyan→green→yellow→red ramp.
+* Composite with `ctx.globalCompositeOperation = "lighter"`.
+
+**Return:**
+
+* Default to `base64` (inline `data:image/png;base64,...`).
+* If `returnMode === "url"`, serve from `/public/heatmaps` and return `/heatmaps/<file>`.
+
+## 3) Route layer (align the contract)
+
+In **`server/app-routes.ts`**, replace the heatmap routes with:
+
+```ts
+// POST /api/v1/heatmap (AI-assisted)
+app.post("/api/v1/heatmap", apiLimiter, async (req, res) => {
+  try {
+    const { url, device = "desktop", returnMode = "base64" } = req.body ?? {};
+    if (!url) return res.status(400).json({ error: "URL is required" });
+
+    const { generateHeatmap } = await import("./services/heatmap");
+    const result = await generateHeatmap({ url, device, returnMode });
+    return res.json(result);
+  } catch (err) {
+    console.error("[/api/v1/heatmap] error:", err);
+    return res.status(500).json({ error: "Failed to generate heatmap" });
+  }
+});
+
+// POST /api/v1/heatmap/data (data-driven)
+app.post("/api/v1/heatmap/data", apiLimiter, async (req, res) => {
+  try {
+    const { url, dataPoints, device = "desktop", returnMode = "base64" } = req.body ?? {};
+    if (!url) return res.status(400).json({ error: "URL is required" });
+    if (!Array.isArray(dataPoints)) return res.status(400).json({ error: "dataPoints[] required" });
+
+    const { generateDataHeatmap } = await import("./services/heatmap");
+    const result = await generateDataHeatmap({ url, dataPoints, device, returnMode });
+    return res.json(result);
+  } catch (err) {
+    console.error("[/api/v1/heatmap/data] error:", err);
+    return res.status(500).json({ error: "Failed to generate data heatmap" });
+  }
+});
+```
+
+Also keep this static mount (already present):
+
+```ts
+app.use("/heatmaps", express.static(path.join(__dirname, "..", "public", "heatmaps")));
+```
+
+## 4) Make the folder guaranteed
+
+On server start (or inside the service before write):
+
+```ts
+import fs from "fs";
+import path from "path";
+const heatmapsDir = path.join(__dirname, "..", "public", "heatmaps");
+fs.mkdirSync(heatmapsDir, { recursive: true });
+```
+
+## 5) Client smoke test (minimal)
+
+Add a test button (e.g., in a simple route or page) that does:
+
+```ts
+const r = await fetch("/api/v1/heatmap", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ url: "https://www.acquisition.com/", device: "desktop", returnMode: "base64" })
+});
+const { base64 } = await r.json();
+img.src = base64; // <img id="preview">
+```
+
+## 6) Environment
+
+* Set `OPENAI_API_KEY` in Replit Secrets.
+* Keep `NODE_ENV=development tsx server/index.ts` for `npm run dev`.
+* If build bundling is used, ensure ESM output and that dynamic imports resolve to compiled files (or run with tsx in dev).
+
+## 7) Guardrails
+
+* If OpenAI throws or returns non-JSON, fall back to your `advancedHotspotDetection()` (already present in `heatmapGenerator.js`).
+* If Puppeteer launch fails, return a clear 500 with `details: "Browser process failed to launch"` (you already had a tiny-PNG sentinel—no need; just error).
+
+---
+
+# Quick checklist (so this doesn’t regress)
+
+* [ ] `server/services/heatmap.ts` has **no** `...` truncations.
+* [ ] Exports: `generateHeatmap`, `generateDataHeatmap`.
+* [ ] `@napi-rs/canvas` only (no `canvas`).
+* [ ] `/api/v1/heatmap` uses `{ url, device, returnMode }`.
+* [ ] `/api/v1/heatmap/data` validates `dataPoints[]`.
+* [ ] Puppeteer launch flags exactly as above.
+* [ ] `OPENAI_API_KEY` present.
+* [ ] A minimal client button renders the returned PNG.
+
+If you want, I can also drop in a fully fleshed `server/services/heatmap.ts` with the AI and data paths implemented end-to-end—just say the word and I’ll paste the whole file.

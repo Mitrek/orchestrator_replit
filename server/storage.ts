@@ -11,7 +11,7 @@ import {
   type InsertRequestLog,
   type Integration,
   type InsertIntegration
-} from "../shared/schema.js";
+} from "@shared/schema";
 import { db, withDbRetry } from "./db";
 import { eq, and, desc, gte, count } from "drizzle-orm";
 

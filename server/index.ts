@@ -1,6 +1,5 @@
 import express, { type Request, Response, NextFunction } from "express";
-import path from "path";
-import { registerRoutes } from "./app-routes";
+import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 
 // Keep only the ping route here; all other APIs are registered in routes.ts
@@ -19,12 +18,6 @@ delete (neonConfig as any).webSocketProxy;
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
-
-// Serve static heatmap images
-import { fileURLToPath } from 'url';
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-app.use('/heatmaps', express.static(path.join(__dirname, '..', 'public', 'heatmaps')));
 
 // Request timing + compact API response logger
 app.use((req, res, next) => {

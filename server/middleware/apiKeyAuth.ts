@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
 import bcrypt from "bcryptjs";
 import { db } from "../db";
-import { apiKeys } from "../../shared/schema.js";
+import { apiKeys } from "@shared/schema";
 import { eq } from "drizzle-orm";
 
 /**

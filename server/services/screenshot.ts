@@ -47,22 +47,7 @@ export async function screenshotToBase64(opts: {
     browser = await puppeteer.launch({
       executablePath,
       headless: chromium.headless, // true on Replit/serverless
-      args: [
-        ...chromium.args,
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--no-first-run',
-        '--no-zygote',
-        '--disable-background-timer-throttling',
-        '--disable-backgrounding-occluded-windows',
-        '--disable-renderer-backgrounding',
-        '--disable-features=TranslateUI',
-        '--disable-ipc-flooding-protection',
-        '--disable-web-security',
-        '--disable-features=VizDisplayCompositor',
-      ],
+      args: chromium.args, // hardened defaults
       defaultViewport: chromium.defaultViewport, // safe baseline
     });
   } catch (e: any) {

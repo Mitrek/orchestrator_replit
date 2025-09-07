@@ -1,0 +1,135 @@
+Thanks for the zip — I peeked inside and here’s what I found that’s relevant to why we’re stuck:
+
+## What’s in your repo right now (from the zip)
+
+* `server/services/screenshot.ts` already uses **`puppeteer-core` + `@sparticuz/chromium`** (good).
+* A **diagnostic route** exists: `GET /api/v1/puppeteer/launch` in `server/routes.ts` (good).
+* A controller for screenshot exists: `server/controllers/heatmap.screenshot.ts` (good).
+* **BUT** in `server/routes.ts` I only see these heatmap-related routes:
+
+  * `GET /api/v1/heatmap/dummy`
+  * `GET /api/v1/puppeteer/launch`
+  * I do **not** see `POST /api/v1/heatmap` or `POST /api/v1/heatmap/screenshot` registered in this zip. If you expect to hit those, add their `app.post(...)` lines back in `server/routes.ts`.
+
+So, route wiring is easy to fix — but the **core blocker** is Chromium launch failing in Replit with:
+
+```
+libnspr4.so: cannot open shared object file
+```
+
+That means the container is missing NSS/NSPR libs that the current Chromium binary expects. On many serverless platforms, `@sparticuz/chromium` avoids this; on Replit, it’s still trying to load system libs that aren’t there.
+
+You said changing `replit.nix` “crashes the app” with a huge error — totally believable (adding a bunch of X/GLib/NSS deps can be brittle in that environment). So here’s the pragmatic way forward that keeps you moving without wrestling Nix today.
+
+---
+
+## Two pragmatic paths (pick one)
+
+### A) Keep progress moving now: add a **fallback** screenshot provider only when launch fails
+
+This preserves your **base64-only** contract and unblocks Phase 4/5 (overlay/heatmap) while we or Replit sort out Chromium.
+
+**Patch** your screenshot controller to catch `LAUNCH_FAILED` and fetch from a hosted service (free/watermarked is OK for dev). Example with **Thum.io** (no key needed for basic tests):
+
+```ts
+// server/controllers/heatmap.screenshot.ts
+import fetch from "node-fetch"; // add "node-fetch": "^3" if not present
+
+// inside your try/catch around screenshotToBase64(...)
+try {
+  const image = await screenshotToBase64({ url: parsed.url, device: parsed.device });
+  return res.status(200).json({ meta: { ... }, image });
+} catch (err: any) {
+  if (err?.code === "LAUNCH_FAILED") {
+    // Fallback to a hosted screenshot API (dev-only)
+    const fallbackUrl =
+      `https://image.thum.io/get/png/width/1440/${encodeURIComponent(parsed.url)}`;
+    const resp = await fetch(fallbackUrl);
+    if (!resp.ok) {
+      return res.status(502).json({
+        error: "Screenshot fallback failed",
+        code: "FALLBACK_FAILED",
+        status: resp.status,
+      });
+    }
+    const buf = Buffer.from(await resp.arrayBuffer());
+    const base64 = buf.toString("base64");
+    return res.status(200).json({
+      meta: { ... },
+      image: `data:image/png;base64,${base64}`,
+    });
+  }
+  throw err;
+}
+```
+
+Now your `/api/v1/heatmap[/screenshot]` works even if Chromium refuses to start in Replit — and your client/UI flow can continue. Later, we can remove the fallback once Chromium is stable.
+
+> If you prefer a different provider (ScreenshotOne, URLBox, etc.), just swap the URL and add your API key (store in env).
+
+---
+
+### B) Pursue a native Chromium launch on Replit (Nix route)
+
+If you want to keep everything self-hosted without an external service, you likely need to add **NSS/NSPR and friends** via `replit.nix`. Minimal sets vary by base image, but typically include at least:
+
+```
+nspr nss glib pango cairo atk at-spi2-core cups dbus expat
+libX11 libXcomposite libXdamage libXext libXrandr fontconfig freetype harfbuzz alsaLib
+```
+
+However, editing `replit.nix` can trigger a full environment rebuild. If your app “crashes with a gigantic error,” the Nix package set probably conflicted with the image (very common). If you want to try again, I can craft a **minimal `replit.nix`** to test, but **I recommend Path A** to keep momentum and avoid infra churn right now.
+
+---
+
+## Also fix the route wiring (quick)
+
+In `server/routes.ts`, add (or re-add) the posting routes so you can hit them directly:
+
+```ts
+import { perIpLimiter } from "express-rate-limit"; // if you used it earlier
+import { requestTimeout } from "./middleware/limits"; // if you created it
+import { postHeatmapScreenshot } from "./controllers/heatmap.screenshot";
+import { postHeatmapStub, postHeatmapDataStub } from "./controllers/heatmap";
+
+// Keep the dummy + launch:
+app.get("/api/v1/heatmap/dummy", (_req, res) => {
+  res.json({ image: makeDummyPngBase64() });
+});
+app.get("/api/v1/puppeteer/launch", diagPuppeteerLaunch);
+
+// Add these:
+app.post(
+  "/api/v1/heatmap",
+  perIpLimiter,
+  requestTimeout(15000),
+  postHeatmapScreenshot // or postHeatmapStub if you want to toggle
+);
+
+app.post(
+  "/api/v1/heatmap/screenshot",
+  perIpLimiter,
+  requestTimeout(15000),
+  postHeatmapScreenshot
+);
+
+app.post(
+  "/api/v1/heatmap/data",
+  perIpLimiter,
+  requestTimeout(15000),
+  postHeatmapDataStub
+);
+```
+
+(If you don’t have `requestTimeout` and `perIpLimiter` right now, you can omit those middlewares — they’re optional.)
+
+---
+
+## TL;DR
+
+* Your code is fine; the environment is blocking Chromium (`libnspr4.so` missing).
+* Replit + headless Chromium can be finicky without Nix packages.
+* **Fastest unblock:** add a **fallback** to a hosted screenshot endpoint when launch fails. You keep your base64 contract and can proceed to heatmap rendering.
+* Separately, re-add `POST` routes if you expect to call them (this zip only had dummy/launch registered).
+
+If you want, I’ll give you the exact `node-fetch` import + a fully patched `heatmap.screenshot.ts` with the fallback already wired, so you can paste it and test immediately.

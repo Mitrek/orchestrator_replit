@@ -4,7 +4,7 @@ import { nanoid } from "nanoid";
 import { performance } from "node:perf_hooks";
 import { heatmapRequestSchema } from "../schemas/heatmap";
 import { screenshotToBase64, ScreenshotError } from "../services/screenshot";
-import { overlayRectangleOnBase64Png, writePngToPublicHeatmaps } from "../services/imaging";
+import { overlayRectangleOnBase64Png } from "../services/imaging";
 
 function jlog(o: any) {
   console.log(JSON.stringify(o));
@@ -18,7 +18,7 @@ export async function postHeatmap(req: Request, res: Response) {
   try {
     // Validate input
     const parsed = heatmapRequestSchema.parse(req.body);
-    const { url, device = "desktop", returnMode = "base64" } = parsed;
+    const { url, device = "desktop" } = parsed;
 
     jlog({
       ts: new Date().toISOString(),
@@ -28,8 +28,7 @@ export async function postHeatmap(req: Request, res: Response) {
       method: "POST",
       phase: "start",
       sourceUrl: url,
-      device,
-      returnMode
+      device
     });
 
     // Step 1: Take screenshot
@@ -101,78 +100,29 @@ export async function postHeatmap(req: Request, res: Response) {
 
     const durationMs = Math.round(performance.now() - t0);
 
-    // Step 3: Return based on mode
-    if (returnMode === "url") {
-      try {
-        const writeResult = await writePngToPublicHeatmaps(overlayResult.buffer);
-        
-        jlog({
-          ts: new Date().toISOString(),
-          level: "info",
-          requestId,
-          route,
-          method: "POST",
-          status: 200,
-          durationMs,
-          phase: "write_ok",
-          filename: writeResult.filename
-        });
+    // Return base64 response
+    jlog({
+      ts: new Date().toISOString(),
+      level: "info",
+      requestId,
+      route,
+      method: "POST",
+      status: 200,
+      durationMs,
+      phase: "complete"
+    });
 
-        return res.status(200).json({
-          url: writeResult.urlPath,
-          meta: {
-            sourceUrl: url,
-            device,
-            returnMode,
-            width: overlayResult.width,
-            height: overlayResult.height,
-            requestId,
-            durationMs
-          }
-        });
-      } catch (err: any) {
-        jlog({
-          ts: new Date().toISOString(),
-          level: "error",
-          requestId,
-          route,
-          phase: "write_failed",
-          errorMessage: err?.message
-        });
-        
-        return res.status(500).json({
-          error: "Failed to write file",
-          code: "WRITE_FAILED",
-          message: err?.message,
-          requestId
-        });
-      }
-    } else {
-      // Return base64
-      jlog({
-        ts: new Date().toISOString(),
-        level: "info",
+    return res.status(200).json({
+      base64: overlayResult.base64,
+      meta: {
+        sourceUrl: url,
+        device,
+        width: overlayResult.width,
+        height: overlayResult.height,
         requestId,
-        route,
-        method: "POST",
-        status: 200,
-        durationMs,
-        phase: "complete"
-      });
-
-      return res.status(200).json({
-        base64: overlayResult.base64,
-        meta: {
-          sourceUrl: url,
-          device,
-          returnMode,
-          width: overlayResult.width,
-          height: overlayResult.height,
-          requestId,
-          durationMs
-        }
-      });
-    }
+        durationMs
+      }
+    });
 
   } catch (err: any) {
     const durationMs = Math.round(performance.now() - t0);
@@ -252,7 +202,7 @@ export async function getHeatmap(_req: Request, res: Response) {
     message: "Heatmap API is operational",
     version: "1.0.0",
     endpoints: {
-      POST: "/api/v1/heatmap - Generate heatmap with overlay"
+      POST: "/api/v1/heatmap - Generate heatmap with overlay (base64 only)"
     }
   });
 }

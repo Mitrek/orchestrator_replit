@@ -1,3 +1,4 @@
+
 // FILE: server/schemas/heatmap.ts
 import { z } from "zod";
 
@@ -6,23 +7,17 @@ import { z } from "zod";
  */
 export const baseHeatmapSchema = z.object({
  url: z.string().url("Must be a valid URL starting with http:// or https://"),
-
  device: z.enum(["desktop", "tablet", "mobile"]).optional().default("desktop"),
-
- returnMode: z.enum(["base64", "url"]).optional().default("base64"),
 });
 
 /**
  * Schema for /api/v1/heatmap (AI-assisted).
- * Only needs the base fields for now.
+ * Simplified to base64-only response.
  */
-// server/schemas/heatmap.ts
 export const heatmapRequestSchema = z.object({
   url: z.string().url("Invalid URL format"),
-  device: z.enum(["desktop", "tablet", "mobile"]).optional().default("desktop"),
-  returnMode: z.enum(["base64", "url"]).optional().default("base64")
+  device: z.enum(["desktop", "tablet", "mobile"]).optional().default("desktop")
 });
-
 
 /**
  * Schema for /api/v1/heatmap/data (data-driven).

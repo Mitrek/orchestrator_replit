@@ -12,10 +12,6 @@ export function makeDummyPngBase64(): string {
   return `data:image/png;base64,${base64}`;
 }
 import { createCanvas, loadImage } from "@napi-rs/canvas";
-import { writeFile, mkdir } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
-import { nanoid } from "nanoid";
 
 interface OverlayOptions {
   x?: number;
@@ -29,13 +25,6 @@ interface OverlayResult {
   base64: string;
   width: number;
   height: number;
-  buffer: Buffer;
-}
-
-interface WriteResult {
-  filename: string;
-  path: string;
-  urlPath: string;
 }
 
 export async function overlayRectangleOnBase64Png(
@@ -50,71 +39,49 @@ export async function overlayRectangleOnBase64Png(
     alpha = 0.35
   } = opts;
 
-  try {
-    // Decode base64 to buffer
-    const base64Data = inputBase64.replace(/^data:image\/png;base64,/, "");
-    const imageBuffer = Buffer.from(base64Data, "base64");
+try {
+  // Accept PNG or JPEG data URIs, or raw base64
+  const cleaned = inputBase64
+    .replace(/^data:image\/png;base64,/, "")
+    .replace(/^data:image\/jpeg;base64,/, "")
+    .trim();
 
-    // Load the image
-    const image = await loadImage(imageBuffer);
-    
-    // Create canvas with same dimensions
-    const canvas = createCanvas(image.width, image.height);
-    const ctx = canvas.getContext("2d");
-
-    // Draw the original screenshot
-    ctx.drawImage(image, 0, 0);
-
-    // Set up overlay rectangle
-    ctx.globalAlpha = alpha;
-    ctx.fillStyle = "rgba(255, 0, 0, 0.8)"; // Red with transparency
-    ctx.fillRect(x, y, w, h);
-
-    // Add a border for visibility
-    ctx.globalAlpha = alpha * 0.7;
-    ctx.strokeStyle = "rgba(255, 255, 255, 1)";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(x, y, w, h);
-
-    // Reset alpha
-    ctx.globalAlpha = 1.0;
-
-    // Export to buffer and base64
-    const buffer = canvas.toBuffer("image/png");
-    const base64 = `data:image/png;base64,${buffer.toString("base64")}`;
-
-    return {
-      base64,
-      width: image.width,
-      height: image.height,
-      buffer
-    };
-  } catch (error: any) {
-    throw new Error(`Failed to overlay rectangle: ${error?.message ?? error}`);
-  }
-}
-
-export async function writePngToPublicHeatmaps(buffer: Buffer): Promise<WriteResult> {
-  const heatmapsDir = join(process.cwd(), "public", "heatmaps");
-  
-  // Ensure directory exists
-  if (!existsSync(heatmapsDir)) {
-    await mkdir(heatmapsDir, { recursive: true });
+  if (!cleaned) {
+    throw new Error("Empty base64 image input");
   }
 
-  // Generate unique filename
-  const timestamp = Date.now();
-  const id = nanoid(8);
-  const filename = `heatmap-${timestamp}-${id}.png`;
-  const filepath = join(heatmapsDir, filename);
-  const urlPath = `/heatmaps/${filename}`;
+  const imageBuffer = Buffer.from(cleaned, "base64");
 
-  // Write file
-  await writeFile(filepath, buffer);
+  // Load the screenshot as an Image
+  const image = await loadImage(imageBuffer);
 
-  return {
-    filename,
-    path: filepath,
-    urlPath
-  };
+  // Create canvas same dimensions
+  const canvas = createCanvas(image.width, image.height);
+  const ctx = canvas.getContext("2d");
+
+  // 1) Draw the screenshot FIRST
+  ctx.drawImage(image, 0, 0);
+
+  // 2) Draw ONE obvious overlay (bright, visible)
+  //    For the smoke test, prefer one mechanism for alpha: globalAlpha.
+  ctx.save();
+  ctx.globalAlpha = alpha;                    // e.g. 0.35
+  ctx.fillStyle = "#FF0000";                  // solid red, alpha comes from globalAlpha
+  ctx.fillRect(x, y, w, h);                   // rectangle at provided position
+  ctx.restore();
+
+  // Optional white border to make it pop
+  ctx.save();
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "rgba(255,255,255,0.9)";
+  ctx.strokeRect(x, y, w, h);
+  ctx.restore();
+
+  // Export to base64 PNG
+  const buffer = canvas.toBuffer("image/png");
+  const base64 = `data:image/png;base64,${buffer.toString("base64")}`;
+
+  return { base64, width: image.width, height: image.height };
+} catch (error: any) {
+  throw new Error(`Failed to overlay rectangle: ${error?.message ?? error}`);
 }

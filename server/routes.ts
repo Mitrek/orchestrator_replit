@@ -152,13 +152,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     postHeatmapDataStub,
   );
 
+  // Heatmap routes
   app.get("/api/v1/heatmap/dummy", (_req, res) => {
-    res.json({
-      meta: { note: "dummy image" },
-      image: makeDummyPngBase64(),
-    });
+    res.json({ image: makeDummyPngBase64() });
   });
 
+  // Add the missing POST routes
+  app.post("/api/v1/heatmap", postHeatmapScreenshot);
+  app.post("/api/v1/heatmap/screenshot", postHeatmapScreenshot);
+
+  // Puppeteer diagnostics
   app.get("/api/v1/puppeteer/launch", diagPuppeteerLaunch);
 
   // ------------------------- Subscription Checker ----------------------------

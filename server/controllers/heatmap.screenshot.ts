@@ -16,11 +16,45 @@ export async function postHeatmapScreenshot(req: Request, res: Response) {
   try {
     const parsed = heatmapRequestSchema.parse(req.body);
 
-    const image = await screenshotToBase64({
-      url: parsed.url,
-      device: parsed.device,
-      fullPage: false, // change to true later if you want
-    });
+    let image: string;
+    
+    try {
+      image = await screenshotToBase64({
+        url: parsed.url,
+        device: parsed.device,
+        fullPage: false, // change to true later if you want
+      });
+    } catch (screenshotErr: any) {
+      // Fallback to hosted screenshot service if Chromium fails to launch
+      if (screenshotErr?.code === "LAUNCH_FAILED") {
+        jlog({
+          ts: new Date().toISOString(),
+          level: "warn",
+          requestId,
+          route,
+          method: "POST",
+          message: "Chromium launch failed, using fallback screenshot service",
+          originalError: screenshotErr.message,
+        });
+
+        // Use Thum.io as fallback (free, no API key needed)
+        const fallbackUrl = `https://image.thum.io/get/png/width/1440/${encodeURIComponent(parsed.url)}`;
+        
+        const resp = await fetch(fallbackUrl);
+        if (!resp.ok) {
+          throw new ScreenshotError(
+            "SCREENSHOT_FAILED",
+            `Fallback screenshot service failed with status ${resp.status}`
+          );
+        }
+        
+        const buf = Buffer.from(await resp.arrayBuffer());
+        image = `data:image/png;base64,${buf.toString("base64")}`;
+      } else {
+        // Re-throw other screenshot errors
+        throw screenshotErr;
+      }
+    }
 
     const durationMs = Math.round(performance.now() - t0);
     jlog({

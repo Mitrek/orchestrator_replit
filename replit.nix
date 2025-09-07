@@ -17,15 +17,15 @@
     pkgs.cups
     pkgs.dbus
     pkgs.expat
-    pkgs.libX11
-    pkgs.libXcomposite
-    pkgs.libXdamage
-    pkgs.libXext
-    pkgs.libXrandr
-    pkgs.libXrender
-    pkgs.libXfixes
-    pkgs.libXss
-    pkgs.libxcb
+    pkgs.xorg.libX11
+    pkgs.xorg.libXcomposite
+    pkgs.xorg.libXdamage
+    pkgs.xorg.libXext
+    pkgs.xorg.libXrandr
+    pkgs.xorg.libXrender
+    pkgs.xorg.libXfixes
+    pkgs.xorg.libXScrnSaver
+    pkgs.xorg.libxcb
     pkgs.fontconfig
     pkgs.freetype
     pkgs.harfbuzz
@@ -48,15 +48,15 @@
       pkgs.cups
       pkgs.dbus
       pkgs.expat
-      pkgs.libX11
-      pkgs.libXcomposite
-      pkgs.libXdamage
-      pkgs.libXext
-      pkgs.libXrandr
-      pkgs.libXrender
-      pkgs.libXfixes
-      pkgs.libXss
-      pkgs.libxcb
+      pkgs.xorg.libX11
+      pkgs.xorg.libXcomposite
+      pkgs.xorg.libXdamage
+      pkgs.xorg.libXext
+      pkgs.xorg.libXrandr
+      pkgs.xorg.libXrender
+      pkgs.xorg.libXfixes
+      pkgs.xorg.libXScrnSaver
+      pkgs.xorg.libxcb
       pkgs.fontconfig
       pkgs.freetype
       pkgs.harfbuzz

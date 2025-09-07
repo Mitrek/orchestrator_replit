@@ -1,0 +1,135 @@
+Yep — I opened your zip and poked through the repo. You’ve got a couple of “hard blockers” that will crash the server before it can even start.
+
+# What’s breaking the app (and how to fix)
+
+## 1) Static files path is wrong in production
+
+**File:** `server/vite.ts`
+**Problem:** In prod you call `serveStatic(app)`, which looks for `server/public`. Your Vite build outputs to `dist/public` (root), so the folder it tries to serve does **not** exist → the app throws and dies.
+
+**Fix (change one line):**
+
+```ts
+// server/vite.ts
+export function serveStatic(app: Express) {
+-  const distPath = path.resolve(import.meta.dirname, "public");
++  const distPath = path.resolve(import.meta.dirname, "..", "dist", "public");
+  ...
+}
+```
+
+Why: your `vite.config.ts` sets:
+
+```ts
+root: path.resolve(import.meta.dirname, "client"),
+build: {
+  outDir: path.resolve(import.meta.dirname, "dist/public"),
+}
+```
+
+…which resolves to `<repo-root>/dist/public`. So `serveStatic` needs to point to `../dist/public` from inside `server/`.
+
+---
+
+## 2) “routes” name collision (can break module resolution)
+
+**Files:**
+
+* `server/index.ts` – `import { registerRoutes } from "./routes";`
+* `server/routes.ts` – the *file* that actually exports `registerRoutes`
+* `server/routes/` – a *folder* containing `ping.ts`
+
+**Problem:** Having **both** a file named `routes.ts` and a folder named `routes/` can trip up different bundlers/runtimes. Some will resolve the **directory** first and look for `routes/index.ts` (which you don’t have) → crash on boot.
+
+**Two clean ways to fix (pick one):**
+
+* **Option A (rename the file):**
+
+  1. Rename `server/routes.ts` → `server/app-routes.ts`
+  2. Update one import:
+
+  ```ts
+  // server/index.ts
+  - import { registerRoutes } from "./routes";
+  + import { registerRoutes } from "./app-routes";
+  ```
+
+* **Option B (use index in the folder):**
+
+  1. Move the contents of `server/routes.ts` into `server/routes/index.ts`
+  2. Delete `server/routes.ts`
+  3. Keep `import { registerRoutes } from "./routes";` as-is (it will now resolve the folder’s index)
+
+I recommend **Option A** (smaller change, less churn).
+
+---
+
+## 3) Native `bcrypt` vs `bcryptjs` (install/runtime crash on some hosts)
+
+**File:** `server/routes.ts`
+**Problem:** You import native `bcrypt` here:
+
+```ts
+import bcrypt from "bcrypt";
+```
+
+…but everywhere else (e.g., `server/middleware/apiKeyAuth.ts`) you’re using `bcryptjs`. Native `bcrypt` often fails to build or load on serverless/Alpine images, leading to startup crashes.
+
+**Fix:**
+
+```ts
+// server/routes.ts
+- import bcrypt from "bcrypt";
++ import bcrypt from "bcryptjs";
+```
+
+The rest of the code can stay the same (`genSalt`, `hash`, `compare` all exist in `bcryptjs`).
+(Optional but recommended) Remove the native package from your deps later:
+
+* In `package.json`: remove `"bcrypt"`
+* `npm i` (or `pnpm i`) to clean it up
+
+---
+
+## 4) Safety check: DATABASE\_URL
+
+**File:** `server/db.ts`
+**Behavior:** If `process.env.DATABASE_URL` is missing, the server throws immediately:
+
+```ts
+if (!url) throw new Error("DATABASE_URL must be set");
+```
+
+Just make sure this env var is present in your runtime; otherwise the above fixes won’t matter because the app will still crash on boot.
+
+---
+
+# Quick verification checklist (after changes)
+
+1. **Build client:**
+
+   ```bash
+   npm run build
+   ```
+
+   This should produce `<repo-root>/dist/public`.
+
+2. **Start server (prod mode):**
+
+   ```bash
+   npm run start
+   ```
+
+   The server should now **find** `../dist/public` and boot without throwing.
+
+3. **Dev mode still OK:**
+
+   ```bash
+   npm run dev
+   ```
+
+   In dev, `index.ts` calls `setupVite(app, server)` (middleware) instead of `serveStatic`, so nothing changes there.
+
+---
+
+If you want, I can also send a tiny patch set (diff) touching only those lines — but the snippets above show exactly **which file** and **where** to change.

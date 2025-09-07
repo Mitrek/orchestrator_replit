@@ -1,0 +1,139 @@
+Got it. I unzipped **AilureOrchestrator(12).zip** and traced the boot path. Here’s the concrete diagnosis you can give Replit:
+
+---
+
+# 🚨 Why the server won’t start
+
+Your server crashes **before** it can listen because the **server-side TypeScript imports use the `@shared/*` path alias**, but your runtime (tsx in dev / esbuild bundle in prod) isn’t resolving TS path aliases for the server. As soon as `server/index.ts` pulls in modules that import `@shared/schema`, Node throws `Cannot find module '@shared/schema'` and the process exits.
+
+This is the first offending chain:
+
+* `server/index.ts` → `server/app-routes.ts` → **`server/db.ts`**
+* `server/db.ts` does:
+
+  ```ts
+  import * as schema from "@shared/schema"; // ❌ crashes here
+  ```
+
+There are a few more server files importing `@shared/*`, so *any* of them can kill the boot.
+
+---
+
+# ✅ Two viable fixes (pick ONE)
+
+## Option A — Make the imports relative (quick + reliable)
+
+Change every **server-side** import from `@shared/...` → `../shared/...`.
+
+**Edit these files:**
+
+1. `server/db.ts`
+
+```ts
+- import * as schema from "@shared/schema";
++ import * as schema from "../shared/schema";
+```
+
+2. `server/storage.ts`
+
+```ts
+- } from "@shared/schema";
++ } from "../shared/schema";
+```
+
+3. `server/middleware/apiKeyAuth.ts`
+
+```ts
+- import { apiKeys } from "@shared/schema";
++ import { apiKeys } from "../shared/schema";
+```
+
+4. `server/utils/plan.ts`
+
+```ts
+- import { users } from "@shared/schema";
++ import { users } from "../shared/schema";
+```
+
+5. (Optional) `server/routes.ts` (legacy/unused at runtime, but fix to keep it buildable)
+
+```ts
+- } from "@shared/schema";
++ } from "../shared/schema";
+```
+
+> The **client** can keep using `@shared/*` because Vite handles it. The change is **server-only**.
+
+After edits:
+
+```bash
+npm run dev         # development
+# or
+npm run build && npm run start   # production bundle
+```
+
+---
+
+## Option B — Keep aliases but wire them up for Node (more plumbing)
+
+If you prefer to keep `@shared/*` in the server:
+
+1. Install a resolver:
+
+```bash
+npm i -D tsconfig-paths
+```
+
+2. Change your dev script to load aliases:
+
+```json
+// package.json
+"dev": "NODE_ENV=development node -r tsconfig-paths/register --loader tsx server/index.ts"
+```
+
+3. For the **prod bundle**, esbuild still won’t honor TS paths out of the box.
+   Change the imports to relative in the server **or** add an esbuild plugin to map paths (more involved).
+   → Realistically, Option A is simpler and less error-prone.
+
+---
+
+# Other checks I verified (these are OK / already fixed)
+
+* **Static assets in prod**: `server/vite.ts` now serves `../dist/public` (✅ correct).
+* **/heatmaps static**: `server/index.ts` exposes `/heatmaps` from `../public/heatmaps` (✅ and `server/services/heatmap.ts` writes to `process.cwd()/public/heatmaps`; works).
+* **bcrypt**: Server code uses `bcryptjs` (✅ safer on Replit than native `bcrypt`).
+* **Neon**: WebSocket config is explicitly disabled (✅ for `@neondatabase/serverless`).
+* **Puppeteer**: Only used when you hit `/api/v1/heatmap`, so it won’t block boot (⚠️ may need Chromium flags at runtime, but that’s a separate, route-level concern).
+
+---
+
+# Sanity test matrix (after the import fixes)
+
+1. Dev boot:
+
+```bash
+npm run dev
+# Expect: “serving on port 5000”
+```
+
+2. Prod build + boot:
+
+```bash
+npm run build && npm run start
+# Expect: “serving on port 5000”
+```
+
+3. Ping (needs a valid key in DB):
+
+```bash
+curl -i -H "x-api-key: <YOUR_KEY>" http://localhost:5000/api/v1/ping
+# Expect: 200 {"ok":true,"apiKeyId":"...","userId":"..."}
+```
+
+If you still get a 401 on ping, that’s auth data-related (DB rows), not a boot crash.
+
+---
+
+# TL;DR for Replit assistant
+
+> “The server fails to start because server-side modules import `@shared/schema` using a TS path alias that isn’t resolved at runtime. Convert server imports to relative (`../shared/schema`) or add `tsconfig-paths/register` to the dev loader (and an esbuild path plugin for prod). The concrete files to change are: `server/db.ts`, `server/storage.ts`, `server/middleware/apiKeyAuth.ts`, `server/utils/plan.ts`, and optionally `server/routes.ts`.”

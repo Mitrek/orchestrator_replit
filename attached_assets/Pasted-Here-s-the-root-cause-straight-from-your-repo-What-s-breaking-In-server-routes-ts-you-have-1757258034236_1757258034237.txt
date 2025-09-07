@@ -1,0 +1,84 @@
+Here’s the root cause, straight from your repo:
+
+### What’s breaking
+
+In `server/routes.ts` you have:
+
+```ts
+import { generateHeatmap } from "./services/heatmap";
+```
+
+…but `server/services/heatmap.ts` **does not export** `generateHeatmap`. It exports:
+
+```ts
+export async function generateAI(...) { ... }
+export async function generateFromData(...) { ... }
+```
+
+So when Node tries to load `routes.ts`, module resolution fails with:
+
+```
+SyntaxError: The requested module './services/heatmap' does not provide an export named 'generateHeatmap'
+```
+
+and the server dies before it can start listening.
+
+### Why this happened
+
+You’ve split heatmap logic correctly into two paths (AI and Data), and you already have a dedicated router that uses them properly:
+
+* `server/routes/heatmap.ts`:
+
+  ```ts
+  import { generateAI, generateFromData } from "../services/heatmap";
+  ```
+
+  and it registers:
+
+  * `POST /api/v1/heatmap/ai` → `generateAI`
+  * `POST /api/v1/heatmap/data` → `generateFromData`
+
+But `server/routes.ts` still contains a **legacy** import and handler for `POST /api/v1/heatmap` that refers to a non-existent `generateHeatmap`.
+
+### Minimal fixes (pick one)
+
+**Option A — Remove the legacy path (recommended)**
+
+1. Delete the bad import in `server/routes.ts`:
+
+   ```diff
+   - import { generateHeatmap } from "./services/heatmap";
+   ```
+2. Remove the legacy `app.post("/api/v1/heatmap", ...)` block in `server/routes.ts`.
+3. Keep using the new endpoints provided by `server/routes/heatmap.ts`:
+
+   * `/api/v1/heatmap/ai`
+   * `/api/v1/heatmap/data`
+
+**Option B — Rename the call to a real export**
+If you must keep `/api/v1/heatmap`:
+
+1. Decide which behavior it should use (AI or Data).
+2. Replace the import and usage in `server/routes.ts`, e.g. AI:
+
+   ```diff
+   - import { generateHeatmap } from "./services/heatmap";
+   + import { generateAI } from "./services/heatmap";
+   ...
+   - const result = await generateHeatmap({ url, viewport, mode: ret });
+   + const result = await generateAI({ url, viewport, mode: ret });
+   ```
+
+**Option C — Add a tiny wrapper export**
+Add this to `server/services/heatmap.ts` to maintain the old name:
+
+```ts
+export async function generateHeatmap(params: HeatmapParams) {
+  // pick desired default behavior; here we map to AI
+  return generateAI(params);
+}
+```
+
+---
+
+Once that mismatch is fixed, the dev script (`NODE_ENV=development tsx server/index.ts`) should boot normally on Node v20.19.3.

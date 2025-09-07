@@ -1,0 +1,181 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Heatmap API Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input, select, textarea { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+        button { background: #007bff; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        .result { margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 4px; }
+        .result img { max-width: 100%; height: auto; border: 1px solid #ddd; }
+        .error { color: #dc3545; }
+        .success { color: #28a745; }
+        #file-group { display: none; }
+        .loading { display: none; color: #007bff; }
+    </style>
+</head>
+<body>
+    <h1>Heatmap API Test</h1>
+    
+    <form id="heatmapForm">
+        <div class="form-group">
+            <label for="apiKey">API Key:</label>
+            <input type="text" id="apiKey" placeholder="ai_lure_xxxx_yyyy" required>
+        </div>
+        
+        <div class="form-group">
+            <label for="mode">Mode:</label>
+            <select id="mode" required>
+                <option value="">Select Mode</option>
+                <option value="ai">AI Mode</option>
+                <option value="data">Data Mode</option>
+            </select>
+        </div>
+        
+        <div class="form-group">
+            <label for="url">URL:</label>
+            <input type="url" id="url" placeholder="https://example.com" required>
+        </div>
+        
+        <div class="form-group" id="file-group">
+            <label for="dataFile">Data File (.jsonl):</label>
+            <input type="file" id="dataFile" accept=".jsonl">
+        </div>
+        
+        <div class="form-group">
+            <label for="returnMode">Return Mode:</label>
+            <select id="returnMode">
+                <option value="base64">Base64</option>
+                <option value="url">URL</option>
+            </select>
+        </div>
+        
+        <button type="submit">Generate Heatmap</button>
+        <div class="loading" id="loading">Generating heatmap...</div>
+    </form>
+    
+    <div id="result" class="result" style="display: none;"></div>
+
+    <script>
+        const form = document.getElementById('heatmapForm');
+        const modeSelect = document.getElementById('mode');
+        const fileGroup = document.getElementById('file-group');
+        const resultDiv = document.getElementById('result');
+        const loading = document.getElementById('loading');
+
+        modeSelect.addEventListener('change', function() {
+            if (this.value === 'data') {
+                fileGroup.style.display = 'block';
+                document.getElementById('dataFile').required = true;
+            } else {
+                fileGroup.style.display = 'none';
+                document.getElementById('dataFile').required = false;
+            }
+        });
+
+        form.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const apiKey = document.getElementById('apiKey').value;
+            const mode = document.getElementById('mode').value;
+            const url = document.getElementById('url').value;
+            const returnMode = document.getElementById('returnMode').value;
+            
+            if (!apiKey || !mode || !url) {
+                resultDiv.innerHTML = '<div class="error">Please fill in all required fields</div>';
+                resultDiv.style.display = 'block';
+                return;
+            }
+
+            loading.style.display = 'block';
+            resultDiv.style.display = 'none';
+
+            try {
+                let response;
+                
+                if (mode === 'ai') {
+                    response = await fetch('/api/v1/heatmap/ai', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'x-api-key': apiKey
+                        },
+                        body: JSON.stringify({
+                            url: url,
+                            viewport: { width: 1440, height: 900 },
+                            return: returnMode
+                        })
+                    });
+                } else if (mode === 'data') {
+                    const fileInput = document.getElementById('dataFile');
+                    if (!fileInput.files[0]) {
+                        throw new Error('Please select a data file');
+                    }
+                    
+                    const formData = new FormData();
+                    formData.append('file', fileInput.files[0]);
+                    formData.append('url', url);
+                    formData.append('return', returnMode);
+                    
+                    response = await fetch('/api/v1/heatmap/data', {
+                        method: 'POST',
+                        headers: {
+                            'x-api-key': apiKey
+                        },
+                        body: formData
+                    });
+                }
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Request failed');
+                }
+
+                const result = await response.json();
+                displayResult(result, mode, returnMode);
+                
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+                resultDiv.style.display = 'block';
+            } finally {
+                loading.style.display = 'none';
+            }
+        });
+
+        function displayResult(result, mode, returnMode) {
+            let html = '<div class="success">Heatmap generated successfully!</div>';
+            
+            if (mode === 'ai') {
+                if (returnMode === 'url' && result.url) {
+                    html += `<p><strong>URL:</strong> <a href="${result.url}" target="_blank">${result.url}</a></p>`;
+                    html += `<img src="${result.url}" alt="Generated Heatmap">`;
+                } else if (result.base64) {
+                    html += `<img src="${result.base64}" alt="Generated Heatmap">`;
+                }
+                html += `<p><strong>Hotspots found:</strong> ${result.meta.hotspots}</p>`;
+            } else if (mode === 'data') {
+                html += '<h3>Generated Segments:</h3>';
+                for (const [segment, data] of Object.entries(result.segments)) {
+                    html += `<h4>${segment.charAt(0).toUpperCase() + segment.slice(1)}</h4>`;
+                    if (data.url) {
+                        html += `<p><a href="${data.url}" target="_blank">${data.url}</a></p>`;
+                        html += `<img src="${data.url}" alt="${segment} Heatmap">`;
+                    } else if (data.base64) {
+                        html += `<img src="${data.base64}" alt="${segment} Heatmap">`;
+                    }
+                }
+                html += `<p><strong>Total sessions processed:</strong> ${result.meta.totalSessions}</p>`;
+            }
+            
+            resultDiv.innerHTML = html;
+            resultDiv.style.display = 'block';
+        }
+    </script>
+</body>
+</html>

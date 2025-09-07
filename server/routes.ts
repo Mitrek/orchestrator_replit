@@ -21,6 +21,8 @@ import { eq } from "drizzle-orm";
 import { apiKeyAuth } from "./middleware/apiKeyAuth";
 import { ensurePremium } from "./middleware/ensurePremium";
 import { generateHeatmap } from "./services/heatmap";
+import { registerPingRoute } from "./routes/ping";
+import { registerHeatmapRoutes } from "./routes/heatmap";
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 
@@ -119,6 +121,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(400).json({ error: error.message });
     }
   });
+
+  registerPingRoute(app);
+  registerHeatmapRoutes(app);
 
   // ------------------------- Premium Gated: Heatmap --------------------------
   app.post("/api/v1/heatmap", apiKeyAuth, ensurePremium, async (req: Request, res: Response) => {

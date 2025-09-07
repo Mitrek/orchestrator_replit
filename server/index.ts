@@ -1,6 +1,7 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+import { createServer } from "http";
 
 // Keep only the ping route here; all other APIs are registered in routes.ts
 import { registerPingRoute } from "./routes/ping";
@@ -90,6 +91,8 @@ app.use((req, res, next) => {
   if (app.get("env") === "development") {
     await setupVite(app, server);
   } else {
+    // Ensure static files are served
+    app.use(express.static("public"));
     serveStatic(app);
   }
 

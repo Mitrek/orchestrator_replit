@@ -5,12 +5,20 @@ import pino from "pino";
 const logger = pino();
 let browser: Browser | null = null;
 
+const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium";
+
 export async function getBrowser(): Promise<Browser> {
   if (browser && (await browser.process())?.pid) return browser;
   
   browser = await puppeteer.launch({
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
     headless: true,
+    executablePath,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox", 
+      "--disable-dev-shm-usage",
+      "--disable-gpu"
+    ]
   });
   
   logger.info("Browser launched successfully");

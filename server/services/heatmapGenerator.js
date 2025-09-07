@@ -4,7 +4,7 @@ import fs from 'fs';
 import readline from 'readline';
 import path from 'path';
 import { createCanvas, loadImage } from 'canvas';
-import OpenAI from 'openai';
+import { OpenAI } from 'openai';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);

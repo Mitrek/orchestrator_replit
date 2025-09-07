@@ -21,8 +21,20 @@ import { eq } from "drizzle-orm";
 import { apiKeyAuth } from "./middleware/apiKeyAuth";
 import { ensurePremium } from "./middleware/ensurePremium";
 import { generateHeatmap } from "./services/heatmap";
+import HeatmapGenerator from "./services/heatmapGenerator.js";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
+
+// File Upload Configuration for heatmap data mode
+const uploadsDir = path.join(process.cwd(), 'uploads');
+const heatmapsDir = path.join(process.cwd(), 'public', 'heatmaps');
+fs.mkdirSync(uploadsDir, { recursive: true });
+fs.mkdirSync(heatmapsDir, { recursive: true });
+
+const upload = multer({ dest: uploadsDir });
 
 // ----------------------------- Rate Limiting ---------------------------------
 const apiLimiter = rateLimit({
@@ -136,6 +148,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (err) {
       console.error("[/api/v1/heatmap] error:", err);
       return res.status(500).json({ error: "Failed to generate heatmap." });
+    }
+  });
+
+  // ------------------------- Premium Gated: Data Heatmap ----------------------
+  app.post("/api/v1/heatmap/data", apiKeyAuth, ensurePremium, upload.single('dataFile'), async (req: any, res: Response) => {
+    try {
+      const { url } = req.body;
+      const dataFile = req.file;
+
+      if (!url || typeof url !== "string") {
+        return res.status(400).json({ error: "Missing or invalid 'url' in body." });
+      }
+      if (!dataFile) {
+        return res.status(400).json({ error: "Missing 'dataFile' in upload." });
+      }
+
+      const generator = new HeatmapGenerator();
+      const timestamp = Date.now();
+      const outputBaseName = `heatmap-data-${timestamp}`;
+      const outputBasePath = path.join(heatmapsDir, outputBaseName);
+      
+      // Start generation asynchronously
+      generator.generateSegmentedHeatmaps(url, dataFile.path, outputBasePath)
+        .then(() => {
+          // Clean up uploaded file
+          fs.unlinkSync(dataFile.path);
+          console.log(`Data heatmap generation completed for ${url}`);
+        })
+        .catch((error) => {
+          console.error('Data heatmap generation failed:', error);
+          // Clean up uploaded file even on error
+          if (fs.existsSync(dataFile.path)) {
+            fs.unlinkSync(dataFile.path);
+          }
+        });
+
+      res.status(202).json({
+        message: 'Data heatmap generation started. Check back for results.',
+        results: {
+          desktop: `/heatmaps/${outputBaseName}-desktop.png`,
+          tablet: `/heatmaps/${outputBaseName}-tablet.png`,
+          mobile: `/heatmaps/${outputBaseName}-mobile.png`
+        }
+      });
+    } catch (err) {
+      console.error("[/api/v1/heatmap/data] error:", err);
+      return res.status(500).json({ error: "Failed to start heatmap generation." });
     }
   });
 

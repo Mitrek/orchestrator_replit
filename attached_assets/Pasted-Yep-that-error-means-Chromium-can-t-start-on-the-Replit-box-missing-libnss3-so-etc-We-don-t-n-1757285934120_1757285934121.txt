@@ -1,0 +1,199 @@
+Yep—that error means Chromium can’t start on the Replit box (missing `libnss3.so`, etc.). We don’t need to fight that right now. The fastest fix is:
+
+**Stop using Puppeteer for this endpoint** and **fetch the screenshot from an external provider** (you already have that code working for `/api/v1/heatmap`). Then apply the canvas overlay server-side and return base64. No system libs required.
+
+Here’s a tight set of instructions you can paste to Replit’s AI assistant to implement it.
+
+---
+
+# Fix plan: make `/api/v1/heatmap/overlay` use external screenshot (no Chromium)
+
+## Goal
+
+* Keep `/api/v1/heatmap` as-is (it already hits thum.io / screenshotmachine and returns base64 under `image`).
+* Change `/api/v1/heatmap/overlay` to **reuse that same external screenshot logic**, then pass the returned base64 to the imaging overlay and return the composited base64 (under `image`).
+* Do **not** launch Chromium in this path.
+
+## Steps
+
+1. **Create a shared screenshot helper** (if not already present)
+
+**File:** `server/services/screenshotExternal.ts` (new)
+
+```ts
+import fetch from "node-fetch";
+
+// Reuse your existing provider logic taken from controllers/heatmap.screenshot
+// Return a data URI string (png or jpeg).
+export async function getExternalScreenshotBase64(url: string, device: "desktop"|"tablet"|"mobile" = "desktop"): Promise<string> {
+  // 1) Try thum.io (or whichever you already used)
+  // 2) Fallback to screenshotmachine
+  // 3) Normalize to data URI: data:image/jpeg;base64,... or data:image/png;base64,...
+
+  // PSEUDO: Replace with your real provider URLs/keys you already wired
+  const tryThum = async () => {
+    const thumUrl = `https://image.thum.io/get/fullpage/${encodeURIComponent(url)}`; // example
+    const r = await fetch(thumUrl);
+    if (!r.ok) throw new Error(`thum.io failed ${r.status}`);
+    const buf = Buffer.from(await r.arrayBuffer());
+    // Assume JPEG; you can sniff header if needed
+    return `data:image/jpeg;base64,${buf.toString("base64")}`;
+  };
+
+  const tryScreenshotMachine = async () => {
+    const apiKey = process.env.SCREENSHOTMACHINE_KEY || "";
+    const smUrl = `https://api.screenshotmachine.com?key=${apiKey}&url=${encodeURIComponent(url)}&dimension=1920x1080&format=png`;
+    const r = await fetch(smUrl);
+    if (!r.ok) throw new Error(`screenshotmachine failed ${r.status}`);
+    const buf = Buffer.from(await r.arrayBuffer());
+    return `data:image/png;base64,${buf.toString("base64")}`;
+  };
+
+  try {
+    return await tryThum();
+  } catch (_) {
+    return await tryScreenshotMachine();
+  }
+}
+```
+
+> You likely already have equivalent code in `server/controllers/heatmap.screenshot.ts`. If so, **extract** that into this helper and import it in both controllers to avoid duplication.
+
+---
+
+2. **Update the overlay controller to use the external helper (no Puppeteer)**
+
+**File:** `server/controllers/heatmap.ts` (the overlay controller; function typically `postHeatmap`)
+
+* Replace the screenshot step (currently launches Puppeteer) with:
+
+```ts
+import { getExternalScreenshotBase64 } from "../services/screenshotExternal";
+import { overlayRectangleOnBase64Png } from "../services/imaging";
+
+export async function postHeatmap(req, res) {
+  const { url, device = "desktop" } = req.body ?? {};
+  const started = Date.now();
+  const requestId = /* your existing id gen */ Math.random().toString(36).slice(2);
+
+  if (!url) return res.status(400).json({ error: "URL is required" });
+
+  try {
+    // 1) Get screenshot from external provider (base64 data URI)
+    const screenshotBase64 = await getExternalScreenshotBase64(url, device as any);
+
+    // 2) Draw the Phase-4 rectangle overlay (base64 in → base64 out)
+    const result = await overlayRectangleOnBase64Png(screenshotBase64, {
+      x: 50, y: 50, w: 600, h: 400, alpha: 0.5
+    });
+
+    // 3) Respond with unified 'image' field (data URI)
+    return res.json({
+      meta: {
+        sourceUrl: url,
+        device,
+        returnMode: "base64",
+        requestId,
+        durationMS: Date.now() - started
+      },
+      image: result.base64
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      error: "Failed to generate overlay",
+      code: "OVERLAY_FAILED",
+      message: err?.message ?? String(err),
+      requestId
+    });
+  }
+}
+```
+
+> **Important:** We’re returning the field **`image`** for consistency with your screenshot endpoint.
+
+---
+
+3. **Ensure imaging accepts PNG or JPEG** (you already did, but confirm)
+
+**File:** `server/services/imaging.ts`
+
+* In `overlayRectangleOnBase64Png`, strip both prefixes before decoding:
+
+```ts
+const cleaned = inputBase64
+  .replace(/^data:image\/png;base64,/, "")
+  .replace(/^data:image\/jpeg;base64,/, "")
+  .trim();
+```
+
+* Draw screenshot first, then one obvious rectangle, then export:
+
+```ts
+ctx.drawImage(image, 0, 0);
+ctx.save();
+ctx.globalAlpha = alpha;
+ctx.fillStyle = "#FF0000";
+ctx.fillRect(x, y, w, h);
+ctx.restore();
+ctx.save();
+ctx.lineWidth = 3;
+ctx.strokeStyle = "rgba(255,255,255,0.9)";
+ctx.strokeRect(x, y, w, h);
+ctx.restore();
+```
+
+* Return `data:image/png;base64,...` in `result.base64`.
+
+---
+
+4. **Routes stay the same (overlay path uses the overlay controller)**
+
+If you already added:
+
+```ts
+app.post("/api/v1/heatmap/overlay", perIpLimiter, requestTimeout(45_000), postHeatmap);
+```
+
+you’re good. No route change needed—just the controller internals.
+
+---
+
+## How to test (PowerShell)
+
+> I saved your base in memory; using it directly here.
+
+```powershell
+# --- Config ---
+$BASE = "https://60018a49-32e3-45ec-92e9-e671294eff18-00-2ctgykht9dlk2.spock.replit.dev"
+$URL  = "https://www.acquisition.com/"
+$OUT  = (Join-Path $PWD "overlay_external.png")
+
+# Call the overlay endpoint (now using external screenshot providers, no Chromium)
+$resp = Invoke-RestMethod -Uri "$BASE/api/v1/heatmap/overlay" `
+  -Method POST -ContentType "application/json" `
+  -Body (@{ url = $URL; device = "desktop" } | ConvertTo-Json -Depth 5)
+
+# Extract data URI (field is 'image'), save, open
+$data = ([string]$resp.image -split ',', 2)[-1]
+[IO.File]::WriteAllBytes($OUT, [Convert]::FromBase64String($data))
+$size = (Get-Item $OUT).Length
+Write-Host "Saved $OUT ($size bytes)."
+Start-Process $OUT
+```
+
+**Expected:** Same screenshot as before, now with a **visible red rectangle** (Phase 4) and **no Chromium errors**.
+
+---
+
+## Optional safety net
+
+If you want to leave the Puppeteer path in place for future environments, gate it behind an env flag:
+
+* `USE_PUPPETEER=0` → always use external providers (Replit default)
+* `USE_PUPPETEER=1` → try Puppeteer first, fallback to external
+
+But for now, keeping overlay **purely external-screenshot → canvas** is the cleanest solution on Replit.
+
+---
+
+If anything in your repo has different filenames, the same logic applies—copy the external screenshot logic you’re already using in `heatmap.screenshot` into a shared service and call it from the overlay controller.

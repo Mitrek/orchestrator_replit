@@ -1,0 +1,196 @@
+Thanks for the error dump—that’s super clear.
+
+I unzipped your repo and checked the boot path. Here’s what’s happening and how to fix it fast.
+
+---
+
+# What’s breaking (and where)
+
+* The crash happens the moment Node tries to load **`canvas`** (native module) inside
+  `server/services/heatmapGenerator.js`:
+
+  ```js
+  import { createCanvas, loadImage } from 'canvas';
+  ```
+
+  This triggers:
+
+  ```
+  Error: libuuid.so.1: cannot open shared object file
+  ```
+
+  i.e., the runtime is missing system libs that **node-canvas** depends on (libuuid + cairo/pango stack). Because `routes.ts` imports the heatmap service at module top-level…
+
+  * `server/routes.ts`
+
+    ```ts
+    import HeatmapGenerator from "./services/heatmapGenerator.js";
+    import { generateHeatmap } from "./services/heatmap";
+    ```
+
+  …the module is evaluated **during server start**, so the process dies before your server can even boot.
+
+* I also spotted a second (future) runtime issue in the same file: you’re doing a **named** import of OpenAI with package `openai@^5.19.1`:
+
+  ```js
+  import { OpenAI } from 'openai';
+  ```
+
+  In v5, the correct import is the **default**:
+
+  ```js
+  import OpenAI from 'openai';
+  ```
+
+  If we don’t fix this, you’ll get `TypeError: OpenAI is not a constructor` once the canvas issue is resolved.
+
+---
+
+# Two clean ways to fix it
+
+## Option A — Easiest & Most Portable: switch to **@napi-rs/canvas** (no system libs)
+
+1. **Edit** `server/services/heatmapGenerator.js`
+
+   * Replace the canvas import:
+
+   ```diff
+   - import { createCanvas, loadImage } from 'canvas';
+   + import { createCanvas, loadImage } from '@napi-rs/canvas';
+   ```
+
+   * Fix OpenAI import at the top of the same file:
+
+   ```diff
+   - import { OpenAI } from 'openai';
+   + import OpenAI from 'openai';
+   ```
+
+2. **Edit** `package.json`
+
+   * In `"dependencies"`:
+
+   ```diff
+   - "canvas": "^2.x",
+   + "@napi-rs/canvas": "^0.1.53",
+   ```
+
+   (Remove `"canvas"` entirely.)
+
+3. **Install**
+
+   ```bash
+   npm rm canvas
+   npm i @napi-rs/canvas
+   ```
+
+4. **Run**
+
+   ```bash
+   npm run dev
+   ```
+
+Why I recommend this: `@napi-rs/canvas` ships prebuilt binaries for most platforms, so you don’t have to fight system packages like `libuuid`, `cairo`, `pango`, etc. It’s a drop-in for your current API (same `createCanvas`, `loadImage` API).
+
+---
+
+## Option B — Stay on **node-canvas**: add system packages (Replit / Nix)
+
+If you prefer to keep `canvas`, you must provide its native runtime deps in your environment. In Replit, add a **`replit.nix`** at the project root:
+
+**File:** `/replit.nix`
+
+```nix
+{ pkgs }: {
+  deps = [
+    pkgs.nodejs-20_x
+    pkgs.pkg-config
+    pkgs.python311
+    pkgs.cairo
+    pkgs.pango
+    pkgs.fontconfig
+    pkgs.freetype
+    pkgs.pixman
+    pkgs.librsvg
+    pkgs.libjpeg
+    pkgs.giflib
+    pkgs.libuuid
+  ];
+}
+```
+
+Then:
+
+```bash
+# Let Replit rebuild the environment
+npm rebuild canvas # ensures bindings link against the provided libs
+npm run dev
+```
+
+(If you’re not on Replit, install the equivalent system libs via your distro: `libuuid1`, `cairo`, `pango`, `libjpeg`, `giflib`, etc.)
+
+You must still fix the OpenAI import:
+
+**File:** `server/services/heatmapGenerator.js`
+
+```diff
+- import { OpenAI } from 'openai';
++ import OpenAI from 'openai';
+```
+
+---
+
+# (Optional) Make startup resilient
+
+Even with the canvas fix, it’s good practice to avoid importing heavy native modules at **server boot**. You can **lazy-load** the generator inside the route handler so a missing dependency doesn’t kill your server’s health endpoints.
+
+**File:** `server/routes.ts`
+Find where you use `HeatmapGenerator` or `generateHeatmap` and dynamically import:
+
+```diff
+- import HeatmapGenerator from "./services/heatmapGenerator.js";
+- import { generateHeatmap } from "./services/heatmap";
++ // We'll lazy-load inside the handler to avoid crashing on boot if deps are missing
+```
+
+Then inside the specific route handler that generates heatmaps:
+
+```ts
+app.post("/api/v1/heatmap", apiKeyAuth, async (req, res) => {
+  try {
+    const { generateHeatmap } = await import("./services/heatmap");
+    // or: const { default: HeatmapGenerator } = await import("./services/heatmapGenerator.js");
+    const result = await generateHeatmap(/* params */);
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Heatmap generation failed" });
+  }
+});
+```
+
+This way, `/api/v1/ping` and your auth routes still work even if the image stack breaks.
+
+---
+
+# Summary of exact edits (by file)
+
+* **`server/services/heatmapGenerator.js`**
+
+  * Replace `canvas` import with `@napi-rs/canvas` **(Option A)**, or keep as-is if using Option B.
+  * Replace `import { OpenAI } from 'openai';` with `import OpenAI from 'openai';`.
+
+* **`package.json`**
+
+  * Remove `"canvas"` and add `"@napi-rs/canvas": "^0.1.53"` **(Option A)**.
+  * (No change if you go with Option B, but you must add the Nix/system packages.)
+
+* **(Replit only)** Add **`/replit.nix`** with the block above **(Option B)**.
+
+* **`server/routes.ts`** (nice-to-have)
+
+  * Move heatmap imports into the route handler using `await import(...)` to avoid boot-time crashes.
+
+---
+
+If you want me to apply **Option A** precisely, I can paste the patched snippets for each file next.

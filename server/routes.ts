@@ -23,8 +23,11 @@ import { ensurePremium } from "./middleware/ensurePremium";
 import { generateHeatmap } from "./services/heatmap";
 import { perIpLimiter, requestTimeout } from "./middleware/limits";
 import { postHeatmapStub, postHeatmapDataStub } from "./controllers/heatmap";
+import { makeDummyPngBase64 } from "./services/imaging";
+import { postHeatmapScreenshot } from "./controllers/heatmap.screenshot";
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
+import { diagPuppeteerLaunch } from "./controllers/puppeteer.diagnostics";
 
 // ----------------------------- Rate Limiting ---------------------------------
 const apiLimiter = rateLimit({
@@ -139,7 +142,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     "/api/v1/heatmap",
     perIpLimiter,
     requestTimeout(15_000),
-    postHeatmapStub,
+    postHeatmapScreenshot,
   );
 
   app.post(
@@ -148,6 +151,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     requestTimeout(15_000),
     postHeatmapDataStub,
   );
+
+  app.get("/api/v1/heatmap/dummy", (_req, res) => {
+    res.json({
+      meta: { note: "dummy image" },
+      image: makeDummyPngBase64(),
+    });
+  });
+
+  app.get("/api/v1/puppeteer/launch", diagPuppeteerLaunch);
 
   // ------------------------- Subscription Checker ----------------------------
   app.get("/api/subscription", apiKeyAuth, async (req, res) => {

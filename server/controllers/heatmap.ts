@@ -1,10 +1,9 @@
-
 import type { Request, Response } from "express";
 import { nanoid } from "nanoid";
 import { performance } from "node:perf_hooks";
 import { heatmapRequestSchema } from "../schemas/heatmap";
-import { screenshotToBase64, ScreenshotError } from "../services/screenshot";
 import { overlayRectangleOnBase64Png } from "../services/imaging";
+import { getExternalScreenshotBase64 } from "../services/screenshotExternal";
 
 function jlog(o: any) {
   console.log(JSON.stringify(o));
@@ -13,7 +12,7 @@ function jlog(o: any) {
 export async function postHeatmap(req: Request, res: Response) {
   const t0 = performance.now();
   const requestId = nanoid();
-  const route = "/api/v1/heatmap";
+  const route = "/api/v1/heatmap/overlay";
 
   try {
     // Validate input
@@ -31,21 +30,18 @@ export async function postHeatmap(req: Request, res: Response) {
       device
     });
 
-    // Step 1: Take screenshot
-    let screenshotBase64: string;
+    // Step 1: Get screenshot from external provider (no Puppeteer/Chromium)
+    let screenshotResult;
     try {
-      screenshotBase64 = await screenshotToBase64({
-        url,
-        device,
-        fullPage: false
-      });
-      
+      screenshotResult = await getExternalScreenshotBase64(url, device);
+
       jlog({
         ts: new Date().toISOString(),
         level: "info",
         requestId,
         route,
-        phase: "screenshot_ok"
+        phase: "screenshot_ok",
+        provider: screenshotResult.provider
       });
     } catch (err: any) {
       jlog({
@@ -54,7 +50,6 @@ export async function postHeatmap(req: Request, res: Response) {
         requestId,
         route,
         phase: "screenshot_failed",
-        errorCode: err instanceof ScreenshotError ? err.code : "UNKNOWN",
         errorMessage: err?.message
       });
       throw err;
@@ -63,12 +58,12 @@ export async function postHeatmap(req: Request, res: Response) {
     // Step 2: Overlay rectangle
     let overlayResult;
     try {
-      overlayResult = await overlayRectangleOnBase64Png(screenshotBase64, {
-        x: 100,
-        y: 100,
-        w: 300,
-        h: 180,
-        alpha: 0.35
+      overlayResult = await overlayRectangleOnBase64Png(screenshotResult.image, {
+        x: 50,
+        y: 50,
+        w: 600,
+        h: 400,
+        alpha: 0.5
       });
 
       jlog({
@@ -76,8 +71,7 @@ export async function postHeatmap(req: Request, res: Response) {
         level: "info",
         requestId,
         route,
-        phase: "overlay_ok",
-        dimensions: `${overlayResult.width}x${overlayResult.height}`
+        phase: "overlay_ok"
       });
     } catch (err: any) {
       jlog({
@@ -88,19 +82,11 @@ export async function postHeatmap(req: Request, res: Response) {
         phase: "overlay_failed",
         errorMessage: err?.message
       });
-      
-      const durationMs = Math.round(performance.now() - t0);
-      return res.status(500).json({
-        error: "Failed to render overlay",
-        code: "RENDER_FAILED",
-        message: err?.message,
-        requestId
-      });
+      throw err;
     }
 
     const durationMs = Math.round(performance.now() - t0);
 
-    // Return base64 response
     jlog({
       ts: new Date().toISOString(),
       level: "info",
@@ -109,7 +95,7 @@ export async function postHeatmap(req: Request, res: Response) {
       method: "POST",
       status: 200,
       durationMs,
-      phase: "complete"
+      provider: screenshotResult.provider
     });
 
     return res.status(200).json({
@@ -117,23 +103,22 @@ export async function postHeatmap(req: Request, res: Response) {
       meta: {
         sourceUrl: url,
         device,
-        width: overlayResult.width,
-        height: overlayResult.height,
+        returnMode: "base64",
         requestId,
-        durationMs
+        durationMs,
+        provider: screenshotResult.provider
       }
     });
 
   } catch (err: any) {
     const durationMs = Math.round(performance.now() - t0);
 
-    // Validation error
+    // validation error
     if (err?.issues) {
       const details = err.issues.map((i: any) => ({
         path: i.path?.join(".") || "",
         message: i.message,
       }));
-      
       jlog({
         ts: new Date().toISOString(),
         level: "warn",
@@ -145,7 +130,6 @@ export async function postHeatmap(req: Request, res: Response) {
         errorCode: "VALIDATION_ERROR",
         validationErrors: details,
       });
-      
       return res.status(400).json({
         error: "Bad Request",
         code: "VALIDATION_ERROR",
@@ -154,29 +138,6 @@ export async function postHeatmap(req: Request, res: Response) {
       });
     }
 
-    // Screenshot errors
-    if (err instanceof ScreenshotError) {
-      jlog({
-        ts: new Date().toISOString(),
-        level: "error",
-        requestId,
-        route,
-        method: "POST",
-        status: 500,
-        durationMs,
-        errorCode: err.code,
-        errorMessage: err.message,
-      });
-      
-      return res.status(500).json({
-        error: "Failed to generate screenshot",
-        code: err.code,
-        message: err.message,
-        requestId,
-      });
-    }
-
-    // Unknown errors
     jlog({
       ts: new Date().toISOString(),
       level: "error",
@@ -185,13 +146,13 @@ export async function postHeatmap(req: Request, res: Response) {
       method: "POST",
       status: 500,
       durationMs,
-      errorCode: "UNKNOWN",
+      errorCode: "OVERLAY_FAILED",
       errorMessage: String(err?.message ?? err),
     });
-    
     return res.status(500).json({
-      error: "Internal Server Error",
-      code: "UNKNOWN",
+      error: "Failed to generate overlay",
+      code: "OVERLAY_FAILED", 
+      message: err?.message ?? String(err),
       requestId
     });
   }

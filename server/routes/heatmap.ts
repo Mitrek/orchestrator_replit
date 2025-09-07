@@ -1,6 +1,7 @@
 
 import type { Express, Request, Response } from "express";
 import multer from "multer";
+import fs from "fs";
 import { apiKeyAuth } from "../middleware/apiKeyAuth";
 import { ensurePremium } from "../middleware/ensurePremium";
 import { generateAI, generateFromData } from "../services/heatmap";
@@ -50,9 +51,14 @@ export function registerHeatmapRoutes(app: Express) {
         // Handle JSON request with dataUrl
         validatedData = DataRequestSchema.parse(req.body);
         
-        if ('dataUrl' in req.body) {
-          // TODO: Download from dataUrl and save to temp file
-          throw new Error('dataUrl not yet implemented - use file upload');
+        if ('dataUrl' in req.body && req.body.dataUrl) {
+          const dataUrl: string = req.body.dataUrl;
+          const tmpPath = `uploads/data_${Date.now()}.jsonl`;
+          const resp = await fetch(dataUrl);
+          if (!resp.ok) throw new Error(`Failed to download dataUrl, status ${resp.status}`);
+          const buf = Buffer.from(await resp.arrayBuffer());
+          await fs.promises.writeFile(tmpPath, buf);
+          dataPath = tmpPath;
         }
       }
 

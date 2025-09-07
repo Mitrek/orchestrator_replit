@@ -1,4 +1,3 @@
-
 import fs from 'fs';
 import readline from 'readline';
 import pino from "pino";
@@ -31,12 +30,12 @@ export async function* streamJsonl(filePath: string): AsyncGenerator<Session> {
     try {
       if (line.trim() === '') continue;
       const session = JSON.parse(line);
-      
+
       if (!session.viewport || isNaN(session.viewport.w) || isNaN(session.viewport.h)) {
         logger.warn('Skipping session with invalid viewport data');
         continue;
       }
-      
+
       yield session;
     } catch (e) {
       logger.warn({ error: e.message }, 'Could not parse line, skipping');
@@ -56,20 +55,19 @@ export function segmentByViewport(session: Session): 'desktop' | 'tablet' | 'mob
 }
 
 export function normalizedToAbsolute(
-  point: Point,
+  point: { x: number; y: number; sy?: number },
   pageHeight: number,
   viewportHeight: number,
   viewportWidth: number
 ): { x: number; y: number } {
-  const scrollYPercent = validateNormalizedCoordinate(point.sy || 0);
-  const yPercent = validateNormalizedCoordinate(point.y);
-  const xPercent = validateNormalizedCoordinate(point.x);
+  const sy = Math.max(0, Math.min(1, Number(point.sy ?? 0)));
+  const x = Math.max(0, Math.min(1, Number(point.x)));
+  const y = Math.max(0, Math.min(1, Number(point.y)));
 
-  const scrollableDist = pageHeight > viewportHeight ? pageHeight - viewportHeight : 0;
-  const absoluteY = (scrollYPercent * scrollableDist) + (yPercent * viewportHeight);
-  const absoluteX = xPercent * viewportWidth;
-
-  return { x: absoluteX, y: absoluteY };
+  const scrollable = Math.max(0, pageHeight - viewportHeight);
+  const absY = sy * scrollable + y * viewportHeight;
+  const absX = x * viewportWidth;
+  return { x: absX, y: absY };
 }
 
 function validateNormalizedCoordinate(value: number): number {
@@ -89,7 +87,7 @@ function isValidPoint(point: any): boolean {
 export function processSessionData(session: Session): Point[] {
   const validClicks = (session.clicks || []).filter(isValidPoint).map(c => ({ ...c, type: 'click' as const }));
   const validMovements = (session.movements || []).filter(isValidPoint).map(m => ({ ...m, type: 'movement' as const }));
-  
+
   return [...validClicks, ...validMovements];
 }
 

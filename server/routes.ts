@@ -12,8 +12,8 @@ import {
   loginSchema,
   registerSchema,
   insertApiKeySchema,
-  users, // from @shared/schema via drizzle model re-exports
-} from "@shared/schema";
+  users, // from ../shared/schema via drizzle model re-exports
+} from "../shared/schema";
 
 import { db, withDbRetry } from "./db";
 import { eq } from "drizzle-orm";

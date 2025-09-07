@@ -1,0 +1,70 @@
+
+{ pkgs }: {
+  deps = [
+    pkgs.nodejs_20
+    pkgs.nodePackages.typescript
+    pkgs.nodePackages.tsx
+    # Chromium dependencies
+    pkgs.chromium
+    pkgs.nspr
+    pkgs.nss
+    pkgs.glib
+    pkgs.pango
+    pkgs.cairo
+    pkgs.at-spi2-core
+    pkgs.atk
+    pkgs.cups
+    pkgs.dbus
+    pkgs.expat
+    pkgs.libX11
+    pkgs.libXcomposite
+    pkgs.libXdamage
+    pkgs.libXext
+    pkgs.libXrandr
+    pkgs.libXrender
+    pkgs.libXfixes
+    pkgs.libXss
+    pkgs.libxcb
+    pkgs.fontconfig
+    pkgs.freetype
+    pkgs.harfbuzz
+    pkgs.alsaLib
+    pkgs.libuuid
+    pkgs.libdrm
+    pkgs.mesa
+    pkgs.gtk3
+    pkgs.gdk-pixbuf
+  ];
+  env = {
+    LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
+      pkgs.nspr
+      pkgs.nss
+      pkgs.glib
+      pkgs.pango
+      pkgs.cairo
+      pkgs.at-spi2-core
+      pkgs.atk
+      pkgs.cups
+      pkgs.dbus
+      pkgs.expat
+      pkgs.libX11
+      pkgs.libXcomposite
+      pkgs.libXdamage
+      pkgs.libXext
+      pkgs.libXrandr
+      pkgs.libXrender
+      pkgs.libXfixes
+      pkgs.libXss
+      pkgs.libxcb
+      pkgs.fontconfig
+      pkgs.freetype
+      pkgs.harfbuzz
+      pkgs.alsaLib
+      pkgs.libuuid
+      pkgs.libdrm
+      pkgs.mesa
+      pkgs.gtk3
+      pkgs.gdk-pixbuf
+    ];
+  };
+}

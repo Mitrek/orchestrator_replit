@@ -20,7 +20,6 @@ import { eq } from "drizzle-orm";
 
 import { apiKeyAuth } from "./middleware/apiKeyAuth";
 import { ensurePremium } from "./middleware/ensurePremium";
-import { generateHeatmap } from "./services/heatmap";
 import { registerPingRoute } from "./routes/ping";
 import { registerHeatmapRoutes } from "./routes/heatmap";
 
@@ -125,24 +124,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerPingRoute(app);
   registerHeatmapRoutes(app);
 
-  // ------------------------- Premium Gated: Heatmap --------------------------
-  app.post("/api/v1/heatmap", apiKeyAuth, ensurePremium, async (req: Request, res: Response) => {
-    try {
-      const { url, viewport, return: ret = "base64" } = (req as any).body ?? {};
-      if (!url || typeof url !== "string") {
-        return res.status(400).json({ error: "Missing or invalid 'url' in body." });
-      }
-      if (ret !== "base64" && ret !== "url") {
-        return res.status(400).json({ error: "Invalid 'return' (use 'base64' or 'url')." });
-      }
-
-      const result = await generateHeatmap({ url, viewport, mode: ret });
-      return res.json(result);
-    } catch (err) {
-      console.error("[/api/v1/heatmap] error:", err);
-      return res.status(500).json({ error: "Failed to generate heatmap." });
-    }
-  });
+  
 
   // ------------------------- Subscription Checker ----------------------------
   app.get("/api/subscription", apiKeyAuth, async (req, res) => {

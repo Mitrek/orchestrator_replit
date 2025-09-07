@@ -5,11 +5,11 @@ import { z } from "zod";
  * Common fields used by both endpoints.
  */
 export const baseHeatmapSchema = z.object({
-  url: z.string().url("Must be a valid URL starting with http:// or https://"),
+ url: z.string().url("Must be a valid URL starting with http:// or https://"),
 
-  device: z.enum(["desktop", "tablet", "mobile"]).optional().default("desktop"),
+ device: z.enum(["desktop", "tablet", "mobile"]).optional().default("desktop"),
 
-  returnMode: z.enum(["base64", "url"]).optional().default("base64"),
+ returnMode: z.enum(["base64", "url"]).optional().default("base64"),
 });
 
 /**
@@ -18,12 +18,9 @@ export const baseHeatmapSchema = z.object({
  */
 // server/schemas/heatmap.ts
 export const heatmapRequestSchema = z.object({
-  url: z.string().url(),
+  url: z.string().url("Invalid URL format"),
   device: z.enum(["desktop", "tablet", "mobile"]).optional().default("desktop"),
-  returnMode: z.enum(["base64", "url"]).optional().default("base64"),
-  // NEW - optional
-  fullPage: z.boolean().optional().default(false),
-  provider: z.enum(["chromium","thumio","screenshotmachine"]).optional()
+  returnMode: z.enum(["base64", "url"]).optional().default("base64")
 });
 
 
@@ -32,7 +29,7 @@ export const heatmapRequestSchema = z.object({
  * Extends the base schema with dataPoints[].
  */
 export const heatmapDataRequestSchema = baseHeatmapSchema.extend({
-  dataPoints: z
+ dataPoints: z
     .array(
       z.object({
         x: z.number().min(0, "x must be >= 0").max(1, "x must be <= 1"),
@@ -47,4 +44,3 @@ export const heatmapDataRequestSchema = baseHeatmapSchema.extend({
 // Inferred TypeScript types (optional but recommended)
 export type HeatmapRequest = z.infer<typeof heatmapRequestSchema>;
 export type HeatmapDataRequest = z.infer<typeof heatmapDataRequestSchema>;
-

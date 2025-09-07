@@ -22,6 +22,9 @@ const app = express();
 app.use(express.json({ limit: "10mb" }));  // or 20mb if you prefer
 app.use(express.urlencoded({ extended: false }));
 
+// Serve static files from public directory
+app.use(express.static(path.join(process.cwd(), "public")));
+
 // ✅ /health route — lightweight readiness check
 app.get("/health", (req, res) => {
   const payload = buildHealthReport();

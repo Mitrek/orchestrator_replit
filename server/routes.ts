@@ -20,8 +20,8 @@ import { eq } from "drizzle-orm";
 
 import { apiKeyAuth } from "./middleware/apiKeyAuth";
 import { ensurePremium } from "./middleware/ensurePremium";
-import { generateHeatmap } from "./services/heatmap";
-import HeatmapGenerator from "./services/heatmapGenerator.js";
+// Removed unused import: import { generateHeatmap } from "./services/heatmap";
+// Removed unused import: import HeatmapGenerator from "./services/heatmapGenerator.js";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -133,6 +133,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ------------------------- Premium Gated: Heatmap --------------------------
+  // Generate AI-powered heatmap
   app.post("/api/v1/heatmap", apiKeyAuth, ensurePremium, async (req: Request, res: Response) => {
     try {
       const { url, viewport, return: ret = "base64" } = (req as any).body ?? {};
@@ -143,6 +144,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Invalid 'return' (use 'base64' or 'url')." });
       }
 
+      const { generateHeatmap } = await import("./services/heatmap");
       const result = await generateHeatmap({ url, viewport, mode: ret });
       return res.json(result);
     } catch (err) {
@@ -164,11 +166,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Missing 'dataFile' in upload." });
       }
 
+      const { default: HeatmapGenerator } = await import("./services/heatmapGenerator.js");
       const generator = new HeatmapGenerator();
       const timestamp = Date.now();
       const outputBaseName = `heatmap-data-${timestamp}`;
       const outputBasePath = path.join(heatmapsDir, outputBaseName);
-      
+
       // Start generation asynchronously
       generator.generateSegmentedHeatmaps(url, dataFile.path, outputBasePath)
         .then(() => {

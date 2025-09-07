@@ -113,7 +113,7 @@ export async function postHeatmap(req: Request, res: Response) {
     });
 
     return res.status(200).json({
-      base64: overlayResult.base64,
+      image: overlayResult.base64,
       meta: {
         sourceUrl: url,
         device,

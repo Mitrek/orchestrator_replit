@@ -22,6 +22,7 @@ import { apiKeyAuth } from "./middleware/apiKeyAuth";
 import { perIpLimiter, requestTimeout } from "./middleware/limits";
 import { makeDummyPngBase64 } from "./services/imaging";
 import { postHeatmapScreenshot } from "./controllers/heatmap.screenshot";
+import { postHeatmap } from "./controllers/heatmap";
 import { diagPuppeteerLaunch } from "./controllers/puppeteer.diagnostics";
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
@@ -149,6 +150,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     perIpLimiter,
     requestTimeout(45_000),
     postHeatmapScreenshot,
+  );
+
+  // New overlay endpoint that draws rectangle on screenshot
+  app.post(
+    "/api/v1/heatmap/overlay",
+    perIpLimiter,
+    requestTimeout(45_000),
+    postHeatmap,
   );
 
   app.get("/api/v1/heatmap/dummy", (_req, res) => {

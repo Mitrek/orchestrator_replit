@@ -10,6 +10,7 @@ channel = "stable-24_05"
 # Puppeteer dependencies
 chromium = "latest"
 glib = "latest"
+glibc = "latest"
 nss = "latest"
 fontconfig = "latest"
 freetype = "latest"

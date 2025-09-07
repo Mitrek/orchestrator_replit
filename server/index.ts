@@ -1,6 +1,6 @@
 import express, { type Request, Response, NextFunction } from "express";
 import path from "path";
-import { registerRoutes } from "./routes";
+import { registerRoutes } from "./app-routes";
 import { setupVite, serveStatic, log } from "./vite";
 
 // Keep only the ping route here; all other APIs are registered in routes.ts

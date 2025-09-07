@@ -1,17 +1,12 @@
 
+modules = ["nodejs-20", "web", "postgresql-16"]
+run = "npm run dev"
+hidden = [".config", ".git", "generated-icon.png", "node_modules", "dist"]
+
 [nix]
 channel = "stable-24_05"
 
-[deployment]
-run = ["sh", "-c", "npm run start"]
-
-[[ports]]
-localPort = 5000
-externalPort = 80
-
 [nix.packages]
-nodejs = "nodejs_20"
-
 # Puppeteer dependencies
 chromium = "latest"
 glib = "latest"
@@ -27,16 +22,70 @@ xorg.libXrandr = "latest"
 xorg.libXrender = "latest"
 xorg.libxcb = "latest"
 xorg.libXScrnSaver = "latest"
+xorg.libxkbcommon = "latest"
+xorg.libXi = "latest"
+xorg.libXtst = "latest"
 gtk3 = "latest"
 pango = "latest"
 cairo = "latest"
 gdk-pixbuf = "latest"
 libdrm = "latest"
-xorg.libxkbcommon = "latest"
-xorg.libXi = "latest"
-xorg.libXtst = "latest"
 cups = "latest"
 dbus = "latest"
 at-spi2-atk = "latest"
 at-spi2-core = "latest"
 atk = "latest"
+
+[deployment]
+deploymentTarget = "autoscale"
+build = ["npm", "run", "build"]
+run = ["npm", "run", "start"]
+
+[[ports]]
+localPort = 5000
+externalPort = 80
+
+[env]
+PORT = "5000"
+
+[workflows]
+runButton = "Dev Server"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start application"
+
+[[workflows.workflow]]
+name = "Start application"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm run dev"
+waitForPort = 5000
+
+[[workflows.workflow]]
+name = "Restart Dev Server"
+author = 640873
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm run dev"
+
+[[workflows.workflow]]
+name = "Dev Server"
+author = 640873
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm run dev"
+
+[agent]
+integrations = ["javascript_database==1.0.0"]

@@ -21,6 +21,8 @@ import { eq } from "drizzle-orm";
 import { apiKeyAuth } from "./middleware/apiKeyAuth";
 import { ensurePremium } from "./middleware/ensurePremium";
 import { generateHeatmap } from "./services/heatmap";
+import { perIpLimiter, requestTimeout } from "./middleware/limits";
+import { postHeatmapStub, postHeatmapDataStub } from "./controllers/heatmap";
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 
@@ -87,11 +89,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const hashedPassword = await bcrypt.hash(userData.password, 10);
-      const user = await storage.createUser({ ...userData, password: hashedPassword });
-
-      const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, {
-        expiresIn: "24h",
+      const user = await storage.createUser({
+        ...userData,
+        password: hashedPassword,
       });
+
+      const token = jwt.sign(
+        { userId: user.id, email: user.email },
+        JWT_SECRET,
+        {
+          expiresIn: "24h",
+        },
+      );
 
       const { password, ...userWithoutPassword } = user;
       res.json({ user: userWithoutPassword, token });
@@ -107,11 +116,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!user) return res.status(401).json({ error: "Invalid credentials" });
 
       const isValidPassword = await bcrypt.compare(password, user.password);
-      if (!isValidPassword) return res.status(401).json({ error: "Invalid credentials" });
+      if (!isValidPassword)
+        return res.status(401).json({ error: "Invalid credentials" });
 
-      const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, {
-        expiresIn: "24h",
-      });
+      const token = jwt.sign(
+        { userId: user.id, email: user.email },
+        JWT_SECRET,
+        {
+          expiresIn: "24h",
+        },
+      );
 
       const { password: _, ...userWithoutPassword } = user;
       res.json({ user: userWithoutPassword, token });
@@ -120,24 +134,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // ------------------------- Premium Gated: Heatmap --------------------------
-  app.post("/api/v1/heatmap", apiKeyAuth, ensurePremium, async (req: Request, res: Response) => {
-    try {
-      const { url, viewport, return: ret = "base64" } = (req as any).body ?? {};
-      if (!url || typeof url !== "string") {
-        return res.status(400).json({ error: "Missing or invalid 'url' in body." });
-      }
-      if (ret !== "base64" && ret !== "url") {
-        return res.status(400).json({ error: "Invalid 'return' (use 'base64' or 'url')." });
-      }
+  // ------------------------- Heatmap (Phase 1 stubs) -------------------------
+  app.post(
+    "/api/v1/heatmap",
+    perIpLimiter,
+    requestTimeout(15_000),
+    postHeatmapStub,
+  );
 
-      const result = await generateHeatmap({ url, viewport, mode: ret });
-      return res.json(result);
-    } catch (err) {
-      console.error("[/api/v1/heatmap] error:", err);
-      return res.status(500).json({ error: "Failed to generate heatmap." });
-    }
-  });
+  app.post(
+    "/api/v1/heatmap/data",
+    perIpLimiter,
+    requestTimeout(15_000),
+    postHeatmapDataStub,
+  );
 
   // ------------------------- Subscription Checker ----------------------------
   app.get("/api/subscription", apiKeyAuth, async (req, res) => {
@@ -153,7 +163,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           })
           .from(users)
           .where(eq(users.id, userId))
-          .limit(1)
+          .limit(1),
       );
 
       if (!row) return res.status(404).json({ error: "User not found" });
@@ -161,7 +171,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const now = new Date();
       const endsAt = row.periodEnd ? new Date(row.periodEnd) : null;
 
-      if (row.status === "active" && endsAt && endsAt.getTime() > now.getTime()) {
+      if (
+        row.status === "active" &&
+        endsAt &&
+        endsAt.getTime() > now.getTime()
+      ) {
         const diffMs = endsAt.getTime() - now.getTime();
         const daysRemaining = Math.floor(diffMs / (1000 * 60 * 60 * 24));
         return res.json({ daysRemaining });
@@ -172,7 +186,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       if (endsAt.getTime() <= now.getTime() || row.status !== "active") {
-        return res.json({ message: "Subscription expired, renew at ai-lure.net" });
+        return res.json({
+          message: "Subscription expired, renew at ai-lure.net",
+        });
       }
 
       return res.json({ message: "Subscribe at ai-lure.net" });
@@ -213,7 +229,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       const keyPrefixHex = crypto.randomBytes(4).toString("hex"); // 8 chars
-      const body = crypto.randomBytes(24).toString("base64url");   // ~32 url-safe
+      const body = crypto.randomBytes(24).toString("base64url"); // ~32 url-safe
       const plaintextKey = `ai_lure_${keyPrefixHex}_${body}`;
 
       const keyHash = await bcrypt.hash(plaintextKey, 12);
@@ -226,13 +242,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       const {
-        id, userId, name, rateLimit, isActive, keyPrefix, createdAt, lastUsedAt,
+        id,
+        userId,
+        name,
+        rateLimit,
+        isActive,
+        keyPrefix,
+        createdAt,
+        lastUsedAt,
       } = created;
 
       res.status(201).json({
         apiKey: plaintextKey, // shown once
         name,
-        id, userId, rateLimit, isActive, keyPrefix, createdAt, lastUsedAt,
+        id,
+        userId,
+        rateLimit,
+        isActive,
+        keyPrefix,
+        createdAt,
+        lastUsedAt,
       });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -264,161 +293,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: error.message });
     }
   });
-
-  // ------------------------- Demo Integrations (JWT) -------------------------
-  // Removed as per the request.
-
-  // ------------------------- Orchestrate (API key) ---------------------------
-  // NOTE: Use the unified apiKeyAuth + your per-key limiter
-  app.post(
-    "/api/v1/orchestrate",
-    apiLimiter,
-    apiKeyAuth,
-    rateLimitByApiKey,
-    async (req: any, res) => {
-      const startTime = Date.now();
-      let statusCode = 200;
-      let errorMessage: string | null = null;
-
-      try {
-        const { integrations, data } = req.body;
-
-        if (!integrations || !Array.isArray(integrations)) {
-          statusCode = 400;
-          throw new Error("integrations array is required");
-        }
-
-        // demo helpers
-        async function getWeatherData(location: string) {
-          try {
-            const response = await fetch(
-              `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(
-                location
-              )}&appid=demo&units=metric`
-            );
-            if (!response.ok) {
-              return {
-                location,
-                temperature: Math.round(Math.random() * 30 + 5),
-                condition: ["sunny", "cloudy", "rainy"][Math.floor(Math.random() * 3)],
-                humidity: Math.round(Math.random() * 100),
-                source: "mock_fallback",
-              };
-            }
-            const data = await response.json();
-            return {
-              location: data.name,
-              temperature: Math.round(data.main.temp),
-              condition: data.weather[0].main.toLowerCase(),
-              humidity: data.main.humidity,
-              source: "openweathermap",
-            };
-          } catch {
-            return {
-              location,
-              temperature: Math.round(Math.random() * 30 + 5),
-              condition: ["sunny", "cloudy", "rainy"][Math.floor(Math.random() * 3)],
-              humidity: Math.round(Math.random() * 100),
-              source: "mock_fallback",
-              error: "API unavailable",
-            };
-          }
-        }
-
-        async function getNewsData(category: string = "general") {
-          const mockNews = [
-            { title: "Tech Innovation Reaches New Heights", source: "TechNews", category: "technology" },
-            { title: "Global Markets Show Positive Trends", source: "FinanceDaily", category: "business" },
-            { title: "Climate Summit Announces New Initiatives", source: "EnviroUpdate", category: "environment" },
-            { title: "Healthcare Breakthrough in AI Diagnostics", source: "MedNews", category: "health" },
-          ];
-          return {
-            category,
-            articles: mockNews
-              .filter((a) => a.category === category || category === "general")
-              .slice(0, 3),
-            count: 3,
-            source: "mock_news_api",
-          };
-        }
-
-        const results = await Promise.all(
-          integrations.map(async (integration: string) => {
-            try {
-              let integrationData;
-              switch (integration.toLowerCase()) {
-                case "weather": {
-                  const location = req.body?.data?.location || "San Francisco";
-                  integrationData = await getWeatherData(location);
-                  break;
-                }
-                case "news": {
-                  const category = req.body?.data?.category || "general";
-                  integrationData = await getNewsData(category);
-                  break;
-                }
-                case "hello": {
-                  integrationData = {
-                    message: "Hello from AI-lure Orchestrator!",
-                    timestamp: new Date().toISOString(),
-                    user: req.apiKey.name || "API User",
-                  };
-                  break;
-                }
-                default: {
-                  integrationData = {
-                    message: `Integration '${integration}' is not yet implemented`,
-                    available_integrations: ["weather", "news", "hello"],
-                  };
-                }
-              }
-
-              return { integration, status: "success", data: integrationData };
-            } catch (err: any) {
-              return { integration, status: "error", error: err.message };
-            }
-          })
-        );
-
-        const responsePayload = {
-          success: true,
-          timestamp: new Date().toISOString(),
-          requestId: crypto.randomUUID(),
-          apiKey: req.apiKey.name,
-          results,
-        };
-
-        await storage.createRequestLog({
-          apiKeyId: req.apiKey.id,
-          endpoint: "/api/v1/orchestrate",
-          method: "POST",
-          statusCode,
-          responseTime: Date.now() - startTime,
-          requestBody: req.body,
-          responseBody: responsePayload,
-          errorMessage,
-        });
-
-        res.json(responsePayload);
-      } catch (error: any) {
-        statusCode = error.status || 500;
-        errorMessage = error.message;
-
-        await storage.createRequestLog({
-          apiKeyId: req.apiKey?.id,
-          endpoint: "/api/v1/orchestrate",
-          method: "POST",
-          statusCode,
-          responseTime: Date.now() - startTime,
-          requestBody: req.body,
-          responseBody: null,
-          errorMessage,
-        });
-
-        res.status(statusCode).json({ error: errorMessage });
-      }
-    }
-  );
 
   const httpServer = createServer(app);
   return httpServer;

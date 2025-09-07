@@ -6,6 +6,9 @@ import { setupVite, serveStatic, log } from "./vite";
 import { registerPingRoute } from "./routes/ping";
 // server/index.ts (very top – first imports)
 import { neonConfig } from "@neondatabase/serverless";
+import path from "path";
+import { fileURLToPath } from "url";
+import { buildHealthReport } from "./health"; // <-- added
 
 // Hard block any WS usage if some file tries to set it up later
 // @ts-ignore
@@ -18,6 +21,12 @@ delete (neonConfig as any).webSocketProxy;
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+
+// ✅ /health route — lightweight readiness check
+app.get("/health", (req, res) => {
+  const payload = buildHealthReport();
+  res.status(200).json(payload);
+});
 
 // Request timing + compact API response logger
 app.use((req, res, next) => {
@@ -103,6 +112,6 @@ app.use((req, res, next) => {
     },
     () => {
       log(`serving on port ${port}`);
-    }
+    },
   );
 })();

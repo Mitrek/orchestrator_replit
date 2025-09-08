@@ -1,0 +1,211 @@
+Awesome—here’s **Step 2 of 3** written as a tight, copy-paste brief for the Replit AI assistant. It plugs the Step-1 hotspots into the existing renderer to return a **base64 PNG** from `/api/v1/heatmap` (AI engine), keeping parity and provider-only screenshots.
+
+---
+
+# Step 2 — AI Heatmap Image (use hotspots → render → base64)
+
+**Goal:** Make `/api/v1/heatmap` produce a **base64 PNG** by combining:
+
+1. provider-only screenshot (Phase 3/4),
+2. Step-1 hotspots (phase7 or legacy),
+3. existing Phase-5 renderer (same visual knobs/parity).
+
+**Do not change:** `/api/v1/heatmap/data`, `/api/v1/heatmap/hotspots` (debug JSON).
+
+---
+
+## A) Files to add / modify
+
+1. `server/services/screenshot.ts`  *(reuse / ensure export)*
+
+   * Ensure there is a function:
+
+     ```ts
+     export async function getScreenshotBuffer(url: string, device: "desktop"|"tablet"|"mobile"): Promise<{ png: Buffer; viewport: {width:number;height:number} }>
+     ```
+   * **Provider-only** path (no Puppeteer). Must return PNG buffer and viewport that matches `DEVICE_MAP`.
+
+2. `server/services/renderer.ts`  *(reuse Phase-5)*
+
+   * Ensure you have a function that composites a heatmap over a screenshot and returns a PNG buffer:
+
+     ```ts
+     export type RenderKnobs = {
+       alpha: number;               // default from Phase-5
+       ramp: "classic"|"soft";      // default from Phase-5
+       blendMode: "lighter";        // Phase-5 default
+       clipMin?: number;            // default Phase-5
+       clipMax?: number;            // default Phase-5
+       kernelRadiusPx?: number;     // Phase-5 radius
+       kernelSigmaPx?: number;      // Phase-5 sigma
+     };
+     export async function renderFromPoints(opts: {
+       screenshotPng: Buffer;
+       viewport: {width:number;height:number};
+       points: Array<{ x:number; y:number; weight?: number }>; // pixel coords
+       knobs?: Partial<RenderKnobs>;
+     }): Promise<Buffer>
+     ```
+   * If your Phase-5 renderer accepts a different shape, add a **thin adapter** to match this signature (don’t rewrite the core).
+
+3. `server/services/hotspotsToPoints.ts`  *(new helper)*
+
+   * Add:
+
+     ```ts
+     import { Hotspot } from "./validation";
+     export function hotspotsToPoints(hotspots: Hotspot[], viewport:{width:number;height:number}, densityPerMp = 800): Array<{x:number;y:number;weight:number}> {
+       // Convert normalized rects to pixel point cloud:
+       // - For each rect, sample a grid proportional to its area
+       // - Default density: ~800 points per megapixel of rect area
+       // - Center-weighted (slightly higher weight near center)
+     }
+     ```
+   * Rules:
+
+     * Convert normalized rect → pixel rect.
+     * Number of points per rect = `areaPx / (1e6/densityPerMp)` (min 20, max 2000 per rect).
+     * Scatter on a simple grid (e.g., 12×N) with jitter ±1 px.
+     * `weight = hotspot.confidence` (clamp \[0.25..1] if parity on).
+     * Ensure all points are inside the rect bounds and within viewport.
+
+4. `server/services/aiHeatmap.ts`  *(new orchestrator for the AI route)*
+
+   * Export:
+
+     ```ts
+     import { getAiHotspotsPhase7 } from "./aiHotspots";
+     import { getAiHotspotsLegacy } from "./aiHotspots.legacy";
+     import { getScreenshotBuffer } from "./screenshot";
+     import { hotspotsToPoints } from "./hotspotsToPoints";
+     import { renderFromPoints } from "./renderer";
+     import { ALLOWED_DEVICES, DEVICE_MAP, clampAndValidateHotspots, greedyDeoverlap, Hotspot } from "./validation";
+
+     export async function makeAiHeatmapImage(params: {
+       url: string;
+       device: "desktop"|"tablet"|"mobile";
+       engine: "phase7"|"legacy";
+       parity: boolean; // default true
+       knobs?: Partial<RenderKnobs>;
+     }): Promise<{
+       base64: string;
+       meta: {
+         phase: "phase7";
+         engine: "ai";
+         device: string;
+         viewport: {width:number;height:number};
+         ai: {
+           engine: "legacy"|"phase7";
+           model: "legacy"|"gpt-4o-mini";
+           fallback: boolean;
+           promptHash?: string;
+           checksumOk?: boolean;
+           requested: number; accepted: number; pruned: number;
+           parity: boolean;
+         };
+         durationMs: number;
+         timestamp: string;
+       };
+     }>
+     ```
+   * Behavior:
+
+     1. Validate `device` against `ALLOWED_DEVICES`; map viewport from `DEVICE_MAP`.
+     2. `getScreenshotBuffer(url, device)` → `png, viewport`.
+     3. Fetch hotspots:
+
+        * if `engine==="legacy"` → `getAiHotspotsLegacy`
+        * else → `getAiHotspotsPhase7`
+     4. **Sanitize again**: `clampAndValidateHotspots` → `greedyDeoverlap({max:8,iouThreshold:0.4})`; drop `<0.25` if `parity`.
+     5. `points = hotspotsToPoints(hotspots, viewport, densityPerMp=800)`.
+     6. `heatPng = await renderFromPoints({ screenshotPng: png, viewport, points, knobs })`.
+     7. Return:
+
+        * `base64 = "data:image/png;base64," + heatPng.toString("base64")`
+        * `meta` with **phase:"phase7"**, **engine:"ai"**, `device`, `viewport`, `ai:{...}` from engine meta + `parity`, `durationMs`, `timestamp`.
+
+5. **Route wiring** — update the main router file that is actually mounted (e.g., `server/routes.ts` or `server/app-routes.ts`)
+
+   * Replace the current **AI image** handler to call the orchestrator above:
+
+     ```
+     POST /api/v1/heatmap
+     body: { url: string; device?: "desktop"|"tablet"|"mobile"; engine?: "legacy"|"phase7"; parity?: boolean; knobs?: {...} }
+     defaults: device="desktop", engine=process.env.AI_ENGINE || "phase7", parity=true
+     flow:
+       - validate url + device
+       - call makeAiHeatmapImage({ url, device, engine, parity, knobs })
+       - respond 200 with { base64, meta }  (base64-only envelope, like Phase 6 but meta.phase="phase7")
+     errors:
+       - 400 if missing url / invalid device
+       - 500 with { error, details } on screenshot/render/engine failure
+     logging:
+       - one JSON line: { route:"/api/v1/heatmap", url, device, engine, parity, durationMs, points:points.length, hotspots:K, fallback }
+     ```
+   * **Keep** the Step-1 debug route `/api/v1/heatmap/hotspots` unchanged.
+
+---
+
+## B) Parity & Visual Consistency
+
+* Use the **same renderer constants** from Phase-5/6:
+
+  * `blendMode = "lighter"`
+  * default `alpha`, `clipMin`, `clipMax`, `kernelRadiusPx`, `kernelSigmaPx`
+  * ramp `"classic"` (or your project’s default)—**do not change** defaults in Step 2
+* Hotspot parity rules already enforced (≤8, IoU<0.4, confidence≥0.25).
+* If engine meta says `fallback:true` (AI or legacy): still render with fallback hotspots → **never** return plain screenshot.
+
+---
+
+## C) Acceptance checks (must pass)
+
+Use your Phase-6 base64 smoketest for `/api/v1/heatmap` (or the one below if you prefer). Expected:
+
+1. **Happy path (phase7)**
+
+   * `POST /api/v1/heatmap { url, device:"desktop" }`
+   * 200, returns `base64` PNG and:
+
+     * `meta.phase === "phase7"`
+     * `meta.engine === "ai"`
+     * `meta.device === "desktop"`
+     * `meta.ai.engine === "phase7"`
+     * `meta.viewport` matches `{1920,1080}`
+
+2. **Device variants**
+
+   * desktop/tablet/mobile → base64 images; viewport matches `DEVICE_MAP`.
+
+3. **Invalid inputs**
+
+   * missing url → 400
+   * device `"watch"` → 400 with allowed list
+
+4. **Legacy engine route (optional for Step 2)**
+
+   * If your Step-1 legacy adapter returns fallback on errors:
+
+     * `POST /api/v1/heatmap { url, engine:"legacy" }` → 200, base64 image, `meta.ai.engine==="legacy"`, `checksumOk===true`.
+
+---
+
+## D) Guardrails
+
+* **No Puppeteer** in the hot path; provider-only screenshots.
+* **Base64-only** output (no URLs/files).
+* Keep `/api/v1/heatmap/hotspots` as a **debug JSON** endpoint for inspection.
+* Keep parity enabled by default.
+
+---
+
+## E) Commit guidance
+
+* `feat(ai): add hotspots→points adapter`
+* `feat(ai): orchestrate AI heatmap (screenshot + hotspots + renderer)`
+* `feat(api): /api/v1/heatmap returns base64 image (phase7, engine=ai)`
+* `chore(log): add structured metrics for ai route`
+
+---
+
+If you want, I can also drop in a **tiny PowerShell snippet** to validate the base64 envelope specifically for Step 2, but your Phase-6 script should already pass as long as `meta.phase` is now `"phase7"`.

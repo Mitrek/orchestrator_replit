@@ -1,0 +1,185 @@
+Yep — I see two *hard* blockers that explain your `{"error":"Failed to generate heatmap"}` on both endpoints:
+
+1. **Missing module**: `server/services/heatmap.ts` imports `./screenshot` (`screenshotToBase64`) but that file/function doesn’t exist → the import throws and your route catches it as “Failed to generate heatmap”.
+
+2. **Canvas misuse**: you use `new Image()` without importing `Image` from `@napi-rs/canvas` (Node has no global `Image`). That throws the moment the function runs.
+
+There’s also a softer trap:
+
+3. **bcrypt vs bcryptjs**: your new `routes.ts` imports `bcrypt` (native module). If you don’t have it compiled on Replit, the whole server can fail at boot. You previously used `bcryptjs` (pure JS). Stick to `bcryptjs` unless you *need* native.
+
+Below are precise, copy-pastable instructions for the assistant to fix and complete Phase 6.
+
+---
+
+# 🔧 Fix plan for the Replit assistant (Phase 6, base64-only)
+
+## A) Add the missing screenshot service
+
+**Create: `server/services/screenshot.ts`**
+
+> Returns a PNG **data URL** (`data:image/png;base64,...`) using Puppeteer. Safe flags for containerized envs included.
+
+```ts
+// FILE: server/services/screenshot.ts
+import puppeteer from "puppeteer";
+
+type Device = "desktop" | "tablet" | "mobile";
+
+const VIEWPORTS: Record<Device, { width: number; height: number }> = {
+  desktop: { width: 1920, height: 1080 },
+  tablet:  { width: 1024, height: 768  },
+  mobile:  { width: 414,  height: 896  },
+};
+
+export async function screenshotToBase64(opts: {
+  url: string;
+  device?: Device;
+  fullPage?: boolean;
+}): Promise<string> {
+  const device = (opts.device ?? "desktop") as Device;
+  const vp = VIEWPORTS[device];
+
+  const browser = await puppeteer.launch({
+    headless: "new",
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--disable-extensions",
+      "--disable-web-security",
+      "--no-first-run",
+      "--no-default-browser-check",
+      "--disable-background-timer-throttling",
+      "--disable-renderer-backgrounding",
+      "--disable-backgrounding-occluded-windows",
+    ],
+  });
+
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({ width: vp.width, height: vp.height, deviceScaleFactor: 1 });
+    await page.goto(opts.url, { waitUntil: "networkidle2", timeout: 30_000 });
+
+    const buf = (await page.screenshot({
+      type: "png",
+      fullPage: Boolean(opts.fullPage),
+    })) as Buffer;
+
+    return `data:image/png;base64,${buf.toString("base64")}`;
+  } finally {
+    await browser.close();
+  }
+}
+```
+
+**Why this matters:** your current `heatmap.ts` *requires* `screenshotToBase64` and dies without it.
+
+---
+
+## B) Fix `heatmap.ts` image decoding and imports (base64 → draw)
+
+**Edit: `server/services/heatmap.ts`**
+
+1. Change the imports to include `Image`:
+
+```ts
+// BEFORE
+import { createCanvas } from "@napi-rs/canvas";
+// AFTER
+import { createCanvas, Image } from "@napi-rs/canvas";
+```
+
+2. Keep your existing `screenshotToBase64` import (it will now resolve):
+
+```ts
+import { screenshotToBase64 } from "./screenshot";
+```
+
+3. In both `renderHeatmapToCanvas` and `renderDataHeatmapToCanvas`, the `Image` must come from `@napi-rs/canvas`. Your code already sets `img.src = buffer;` — that’s fine **once** `Image` is imported. No other changes needed there.
+
+> (If you prefer, you can replace the `new Image()` dance with `loadImage(buffer)` from `@napi-rs/canvas`, but not required.)
+
+---
+
+## C) Keep everything base64-only (no file writes)
+
+You already return base64 from `toBuffer()`. Good. Ensure you **don’t** write to disk or return URLs anywhere in `heatmap.ts`.
+
+---
+
+## D) Safer auth dependency
+
+**Edit: `server/routes.ts`**
+
+* Replace `import bcrypt from "bcrypt";` with:
+
+```ts
+import bcrypt from "bcryptjs";
+```
+
+(Or add `bcrypt` to `dependencies` and ensure Replit can build native modules. Easiest fix: use `bcryptjs` as before.)
+
+---
+
+## E) Package sanity (assistant should verify)
+
+* `package.json` must contain:
+
+  * `"puppeteer": "^22.x"` (or current)
+  * `"@napi-rs/canvas": "^0.1.78"` (or current)
+  * `"bcryptjs": "^2.x"` (if you followed D)
+* No `"canvas"` package — we are standardizing on `@napi-rs/canvas`.
+
+---
+
+## F) Better error surface (optional but helps debugging)
+
+Inside each route’s `catch`, log the real error message:
+
+```ts
+catch (error: any) {
+  console.error("Heatmap generation error:", error?.stack || error);
+  return res.status(500).json({ error: "Failed to generate heatmap", details: error?.message });
+}
+```
+
+This way, if it fails again, your smoke test will show **why**.
+
+---
+
+## G) Re-run your smoke test
+
+Use the same script you already have. If you want a slightly more verbose variant (prints `details` when present), replace both calls with:
+
+```powershell
+try {
+  $resp = Invoke-RestMethod ...
+  if ($resp.base64 -and $resp.base64.StartsWith("data:image/png;base64,")) {
+    Write-Host "PASS   base64 field present" -ForegroundColor Green
+    Write-Host "Sample:" ($resp.base64.Substring(0,80) + "...")
+  } else {
+    Write-Host "FAIL   base64 field missing or invalid" -ForegroundColor Red
+    $resp | ConvertTo-Json -Depth 6
+  }
+} catch {
+  Write-Host "FAIL   request error" -ForegroundColor Red
+  if ($_.ErrorDetails.Message) { $_.ErrorDetails.Message | Out-String | Write-Host }
+  else { $_ | Format-List -Force | Out-String | Write-Host }
+}
+```
+
+---
+
+## Quick checklist the assistant must tick
+
+* [ ] `server/services/screenshot.ts` created exactly as above (returns **data URL**).
+* [ ] `server/services/heatmap.ts` imports `{ createCanvas, Image }` from `@napi-rs/canvas`.
+* [ ] Both render functions successfully instantiate `new Image()` and draw the decoded buffer.
+* [ ] No URL/file return paths — only base64.
+* [ ] `routes.ts` uses `bcryptjs` (or native `bcrypt` is properly installed).
+* [ ] `puppeteer` + flags present; no `puppeteer-core`.
+* [ ] Smoke test shows two **PASS** lines with `data:image/png;base64,` previews.
+
+If anything still fails after these changes, the most likely remaining cause is **Chromium launch** in your Replit environment. In that case, I’ll give you a drop-in `/api/v1/puppeteer/launch` diagnostics handler to verify launch and show the precise error.

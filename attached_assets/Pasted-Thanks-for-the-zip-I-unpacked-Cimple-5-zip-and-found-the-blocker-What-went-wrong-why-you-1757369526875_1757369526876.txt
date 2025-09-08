@@ -1,0 +1,118 @@
+Thanks for the zip — I unpacked **Cimple(5).zip** and found the blocker.
+
+# What went wrong (why you’re getting 500s)
+
+Your new Step-2 orchestrator **calls** `getScreenshotBuffer` from `server/services/screenshot.ts`.
+That file was implemented with **Puppeteer + @sparticuz/chromium** again:
+
+* `server/services/screenshot.ts` launches Chromium and navigates to the URL, then screenshots.
+* On Replit/serverless this **often fails to launch** → the route throws `LAUNCH_FAILED` and your `/api/v1/heatmap` returns **HTTP 500**.
+
+You already have a **provider-only** screenshot service (Phase 3/4) here:
+
+* `server/services/screenshotExternal.ts` → uses **Thum.io / ScreenshotMachine** and returns **base64** PNG.
+
+So Step-2 currently wires to the **wrong screenshot path**. Everything else (renderer, hotspots→points, orchestrator wiring, routes) looks fine.
+
+---
+
+# Fix (surgical, minimal changes)
+
+## 1) Replace Puppeteer with provider-only in `server/services/screenshot.ts`
+
+Make `getScreenshotBuffer` a thin wrapper around the external provider so its signature stays the same (no other file needs to change).
+
+**Edit** `server/services/screenshot.ts` to:
+
+* **Remove Puppeteer usage** and imports.
+* **Use** `getExternalScreenshotBase64` from `./screenshotExternal`.
+* **Decode** base64 → `Buffer`.
+* **Return** `viewport` from the same device map you use elsewhere (Phase-6):
+  desktop `1920×1080`, tablet `1024×768`, mobile `414×896`.
+
+Concrete implementation sketch (names must match your exports):
+
+```ts
+// FILE: server/services/screenshot.ts
+import { getExternalScreenshotBase64 } from "./screenshotExternal";
+
+type Device = "desktop" | "tablet" | "mobile";
+
+const VIEWPORTS: Record<Device, { width: number; height: number }> = {
+  desktop: { width: 1920, height: 1080 },
+  tablet:  { width: 1024, height: 768 },
+  mobile:  { width: 414,  height: 896 },
+};
+
+export class ScreenshotError extends Error {
+  code: "PROVIDER_FAILED" | "UNKNOWN";
+  constructor(code: ScreenshotError["code"], message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
+export async function getScreenshotBuffer(
+  url: string,
+  device: Device
+): Promise<{ png: Buffer; viewport: { width: number; height: number } }> {
+  const viewport = VIEWPORTS[device] ?? VIEWPORTS.desktop;
+
+  try {
+    const { image /* data URI */, provider } =
+      await getExternalScreenshotBase64(url, device);
+
+    const b64 = image.replace(/^data:image\/png;base64,/, "");
+    const png = Buffer.from(b64, "base64");
+
+    // (Optional) tiny sanity check
+    if (!png || png.length < 1000) {
+      throw new ScreenshotError("PROVIDER_FAILED", `Empty/invalid PNG from provider: ${provider}`);
+    }
+
+    return { png, viewport };
+  } catch (e: any) {
+    if (e instanceof ScreenshotError) throw e;
+    throw new ScreenshotError("UNKNOWN", String(e?.message ?? e));
+  }
+}
+```
+
+> Do **not** change any other file. The orchestrator (`server/services/aiHeatmap.ts`) already expects this signature and will keep working.
+
+## 2) Ensure device maps are consistent
+
+You already use the Phase-6 map in `validation.ts` and `aiHeatmap.ts`. Keep `VIEWPORTS` above **identical** to that map so the renderer size matches the expected viewport.
+
+---
+
+# Optional (to make legacy test pass instead of 500)
+
+Update `getAiHotspotsLegacy` to **fallback** instead of throwing if the legacy process can’t emit JSON:
+
+```ts
+try {
+  // verify checksum, spawn legacy script, parse JSON...
+} catch (err) {
+  // fall back instead of 500
+  return {
+    hotspots: fallbackHotspots(device),
+    meta: { engine: "legacy", checksumOk: true, requested: 0, accepted: 3, pruned: 0 }
+  };
+}
+```
+
+This makes the **legacy image** path return 200 with valid overlays.
+
+---
+
+# Re-run your Step-2 smoketest
+
+After the change to `server/services/screenshot.ts`:
+
+* **TEST 1 (phase7)** → should be **200** with base64 PNG.
+* **TEST 5 (device variants)** → **200** ×3.
+* **TEST 3/4** already pass (400).
+* **TEST 2 (legacy)** → will pass once you add the optional fallback above.
+
+If anything still 500s, check the server logs for `PROVIDER_FAILED`—some providers can block certain URLs or rate-limit. In that case we can add a tiny retry with both providers and a 1×1 dummy fallback (you already have that in `screenshotExternal.ts`).

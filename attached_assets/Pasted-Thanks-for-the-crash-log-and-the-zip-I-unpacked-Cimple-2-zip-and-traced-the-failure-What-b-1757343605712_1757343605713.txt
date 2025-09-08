@@ -1,0 +1,119 @@
+Thanks for the crash log and the zip. I unpacked **Cimple(2).zip** and traced the failure.
+
+# What broke (exactly)
+
+## 1) Duplicate variable declaration in the controller (the crash you saw)
+
+File: `server/controllers/heatmap.data.ts`
+
+You declare `returnMode` **twice**:
+
+* First during Zod parse destructuring:
+
+```ts
+const { url, device = "desktop", returnMode = "base64", dataPoints } = parsed;
+```
+
+* Then again from `req.body`:
+
+```ts
+const returnMode = req.body.returnMode ?? "base64";
+```
+
+ESBuild/TSX throws: **The symbol "returnMode" has already been declared** (matches your console: `heatmap.data.ts:45:10`).
+
+### 🔧 Fix (do one of these, not both)
+
+**Option A (simplest):** keep the parsed one, delete the body one.
+
+* **Delete** the line:
+
+  ```ts
+  const returnMode = req.body.returnMode ?? "base64";
+  ```
+* Keep using `returnMode` from the parsed object everywhere below.
+
+**Option B:** don’t destructure `returnMode` from `parsed`, set it from `req.body` once.
+
+* Change the destructuring to:
+
+  ```ts
+  const { url, device = "desktop", dataPoints } = parsed;
+  ```
+* Keep the later:
+
+  ```ts
+  const returnMode = req.body.returnMode ?? "base64";
+  ```
+
+Either way, there must be only **one** `returnMode` declaration.
+
+---
+
+## 2) Suspicious imports in `server/index.ts` (could bite next run)
+
+File: `server/index.ts`
+
+At the top you have:
+
+```ts
+import path from "url";            // ❌ wrong
+import { fileURLToPath } from "url";
+import fs from "node:fs/promises";
+import path from "node:path";      // ✅ correct
+```
+
+Two issues:
+
+* You’re importing `path` from `"url"` (nonsense) and **again** from `"node:path"`.
+* The duplicate `path` binding can cause confusion depending on bundling order.
+
+### 🔧 Fix
+
+* **Remove** the bad line:
+
+  ```ts
+  import path from "url";
+  ```
+* Keep:
+
+  ```ts
+  import path from "node:path";
+  import { fileURLToPath } from "url";
+  ```
+
+---
+
+## 3) Everything else I checked
+
+* `server/services/imaging.ts` contains the Step-3 additions (color ramps + composite + downscale guard). The chunk looks coherent, and your earlier Step-2 functions are still there.
+* `server/routes.ts` imports `postHeatmapData` and registers routes as expected.
+* `public/heatmaps` exists; URL return mode should work once the controller runs.
+
+# Why the assistant’s strategy failed now
+
+Their plan was fine, but they:
+
+* Added Step-3 knobs and logic in the controller, then **redeclared** `returnMode`. That single line stopped the server from even starting.
+* Left a bad `import path from "url";` in `server/index.ts` (probably from a previous edit). It didn’t trigger this crash, but it’s a time bomb; fix it now.
+
+# Quick repair checklist (copy to Replit assistant)
+
+1. **Fix duplicate var**
+   In `server/controllers/heatmap.data.ts`, remove the second `const returnMode = ...` or rename/remove the one in the parsed destructure. Keep only one declaration.
+
+2. **Fix bad import**
+   In `server/index.ts`, delete `import path from "url";`. Keep `import path from "node:path";`.
+
+3. **Rebuild/run**
+
+   ```bash
+   npm run dev
+   ```
+
+   Check the console for a clean boot.
+
+4. **Replay Step-3 smoketest**
+   Use the script I gave you (`heatmap-step3-smoketest.ps1`). You should see PASS lines and saved PNGs.
+
+If anything else pops after these two fixes, paste the new console error and I’ll zero in on it.

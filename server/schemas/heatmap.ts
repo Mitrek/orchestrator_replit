@@ -24,6 +24,7 @@ export const heatmapRequestSchema = z.object({
  * Extends the base schema with dataPoints[].
  */
 export const heatmapDataRequestSchema = baseHeatmapSchema.extend({
+ returnMode: z.enum(["base64", "url"]).optional().default("base64"),
  dataPoints: z
     .array(
       z.object({
@@ -33,7 +34,10 @@ export const heatmapDataRequestSchema = baseHeatmapSchema.extend({
       }),
     )
     .min(1, "At least one dataPoint is required")
-    .max(10000, "Too many dataPoints"),
+    .max(5000, "Too many dataPoints"),
+ alpha: z.number().optional(),
+ radiusPx: z.number().optional(),
+ blurPx: z.number().optional(),
 });
 
 // Inferred TypeScript types (optional but recommended)

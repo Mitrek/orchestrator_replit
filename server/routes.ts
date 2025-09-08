@@ -6,6 +6,8 @@ import crypto from "crypto";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import rateLimit from "express-rate-limit";
+import express from "express"; // Import express to use express.static
+import path from "path"; // Import path for path joining
 
 import { storage } from "./storage";
 import {
@@ -24,6 +26,7 @@ import { makeDummyPngBase64 } from "./services/imaging";
 import { postHeatmapScreenshot } from "./controllers/heatmap.screenshot";
 import { postHeatmap } from "./controllers/heatmap";
 import { diagPuppeteerLaunch } from "./controllers/puppeteer.diagnostics";
+import { postHeatmapData } from "./controllers/heatmap.data";
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 
@@ -158,6 +161,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     perIpLimiter,
     requestTimeout(45_000),
     postHeatmap,
+  );
+
+  // New endpoint to receive heatmap data
+  app.post(
+    "/api/v1/heatmap/data",
+    perIpLimiter,
+    requestTimeout(15_000), // shorter timeout for data processing
+    postHeatmapData,
   );
 
   app.get("/api/v1/heatmap/dummy", (_req, res) => {
@@ -316,6 +327,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: error.message });
     }
   });
+
+  // Serve the dist folder for client routes
+  app.use(express.static(path.join(__dirname, "..", "dist")));
+
+  // Serve heatmap static files
+  app.use("/heatmaps", express.static(path.join(__dirname, "..", "public", "heatmaps")));
 
   const httpServer = createServer(app);
   return httpServer;

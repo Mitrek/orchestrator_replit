@@ -1,15 +1,14 @@
 
 import { getAiHotspotsPhase7 } from "./aiHotspots";
-import { getAiHotspotsLegacy } from "./aiHotspots.legacy";
 import { getScreenshotBuffer } from "./screenshot";
 import { hotspotsToPoints } from "./hotspotsToPoints";
 import { renderFromPoints, type RenderKnobs } from "./renderer";
 import { ALLOWED_DEVICES, DEVICE_MAP, clampAndValidateHotspots, greedyDeoverlap, type Hotspot } from "./validation";
+import * as hotspotsCache from "./hotspotsCache";
 
 export async function makeAiHeatmapImage(params: {
   url: string;
   device: "desktop" | "tablet" | "mobile";
-  engine: "phase7" | "legacy";
   parity: boolean;
   knobs?: Partial<RenderKnobs>;
 }): Promise<{
@@ -20,11 +19,11 @@ export async function makeAiHeatmapImage(params: {
     device: string;
     viewport: { width: number; height: number };
     ai: {
-      engine: "legacy" | "phase7";
-      model: "legacy" | "gpt-4o-mini";
+      engine: "phase7";
+      model: "gpt-4o-mini";
       fallback: boolean;
-      promptHash?: string;
-      checksumOk?: boolean;
+      promptHash: string;
+      cached?: boolean;
       requested: number;
       accepted: number;
       pruned: number;
@@ -35,7 +34,7 @@ export async function makeAiHeatmapImage(params: {
   };
 }> {
   const startTime = Date.now();
-  const { url, device, engine, parity, knobs } = params;
+  const { url, device, parity, knobs } = params;
 
   // Validate device
   if (!ALLOWED_DEVICES.includes(device as any)) {
@@ -43,14 +42,39 @@ export async function makeAiHeatmapImage(params: {
   }
 
   const viewport = DEVICE_MAP[device];
+  
+  // Clamp knobs to safe ranges
+  const clampedKnobs = knobs ? {
+    ...knobs,
+    alpha: knobs.alpha ? Math.max(0.1, Math.min(1, knobs.alpha)) : knobs.alpha,
+    kernelRadiusPx: knobs.kernelRadiusPx ? Math.max(8, Math.min(96, knobs.kernelRadiusPx)) : knobs.kernelRadiusPx,
+    kernelSigmaPx: knobs.kernelSigmaPx ? Math.max(2, Math.min(48, knobs.kernelSigmaPx)) : knobs.kernelSigmaPx
+  } : undefined;
 
   // Get screenshot
   const { png: screenshotPng } = await getScreenshotBuffer(url, device);
 
-  // Fetch hotspots based on engine
+  // Check cache first
+  const cacheEnabled = process.env.HOTSPOTS_CACHE !== "false";
   let hotspotsResult;
-  if (engine === "legacy") {
-    hotspotsResult = await getAiHotspotsLegacy({ url, device, parity });
+  let cached = false;
+
+  if (cacheEnabled) {
+    // Need promptHash for cache key, so do a quick call to get it
+    const tempResult = await getAiHotspotsPhase7({ url, device, parity });
+    const cacheKey = hotspotsCache.key({ url, device, parity, promptHash: tempResult.meta.promptHash });
+    const cachedEntry = hotspotsCache.get(cacheKey);
+    
+    if (cachedEntry) {
+      hotspotsResult = {
+        hotspots: cachedEntry.hotspots,
+        meta: { ...cachedEntry.meta, cached: true }
+      };
+      cached = true;
+    } else {
+      hotspotsResult = tempResult;
+      hotspotsCache.set(cacheKey, hotspotsResult.hotspots, hotspotsResult.meta);
+    }
   } else {
     hotspotsResult = await getAiHotspotsPhase7({ url, device, parity });
   }
@@ -71,11 +95,23 @@ export async function makeAiHeatmapImage(params: {
     screenshotPng,
     viewport,
     points,
-    knobs
+    knobs: clampedKnobs
   });
 
   const base64 = `data:image/png;base64,${heatPng.toString("base64")}`;
   const durationMs = Date.now() - startTime;
+
+  // Log structured line
+  console.log(JSON.stringify({
+    route: "/api/v1/heatmap",
+    url,
+    device,
+    cached,
+    points: points.length,
+    hotspotsCount: finalHotspots.length,
+    durationMs,
+    fallback: hotspotsResult.meta.fallback
+  }));
 
   return {
     base64,
@@ -85,11 +121,11 @@ export async function makeAiHeatmapImage(params: {
       device,
       viewport,
       ai: {
-        engine: hotspotsResult.meta.engine,
-        model: hotspotsResult.meta.engine === "legacy" ? "legacy" : hotspotsResult.meta.model || "gpt-4o-mini",
+        engine: "phase7",
+        model: "gpt-4o-mini",
         fallback: hotspotsResult.meta.fallback || false,
         promptHash: hotspotsResult.meta.promptHash,
-        checksumOk: hotspotsResult.meta.checksumOk,
+        cached,
         requested: hotspotsResult.meta.requested,
         accepted: finalHotspots.length,
         pruned: hotspotsResult.meta.requested - finalHotspots.length,

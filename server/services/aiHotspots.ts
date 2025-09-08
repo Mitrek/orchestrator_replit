@@ -23,27 +23,6 @@ export async function getAiHotspotsPhase7({
     promptHash: string;
   };
 }> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  
-  if (!apiKey) {
-    const fallbackHotspots = getFallbackHotspots();
-    const { kept } = clampAndValidateHotspots(fallbackHotspots);
-    const processed = greedyDeoverlap(kept, { max: 8, iouThreshold: 0.4 });
-    
-    return {
-      hotspots: processed,
-      meta: {
-        engine: "phase7",
-        model: "gpt-4o-mini",
-        fallback: true,
-        requested: fallbackHotspots.length,
-        accepted: processed.length,
-        pruned: fallbackHotspots.length - processed.length,
-        promptHash: ""
-      }
-    };
-  }
-
   const prompt = `Analyze this landing page for eye-tracking hotspots: ${url}
 
 Device: ${device}
@@ -57,9 +36,21 @@ All coordinates must be normalized (0-1).
 Return 5-8 hotspots maximum.`;
 
   const promptHash = createHash("sha256").update(prompt).digest("hex").slice(0, 16);
+  
+  const apiKey = process.env.OPENAI_API_KEY;
+  
+  if (!apiKey) {
+    console.warn("No OpenAI API key, using fallback hotspots");
+    return getFallbackResponse(promptHash);
+  }
 
   try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    // Add 15s timeout
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error("OpenAI timeout after 15s")), 15000);
+    });
+
+    const fetchPromise = fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${apiKey}`,
@@ -83,22 +74,27 @@ Return 5-8 hotspots maximum.`;
       })
     });
 
+    const response = await Promise.race([fetchPromise, timeoutPromise]) as Response;
+
     if (!response.ok) {
-      throw new Error(`OpenAI API error: ${response.status}`);
+      console.warn(`OpenAI API error: ${response.status}`);
+      return getFallbackResponse(promptHash);
     }
 
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content;
     
     if (!content) {
-      throw new Error("No content from OpenAI");
+      console.warn("No content from OpenAI");
+      return getFallbackResponse(promptHash);
     }
 
     const parsed = JSON.parse(content);
     let hotspots = parsed.hotspots || [];
 
     if (!Array.isArray(hotspots) || hotspots.length === 0) {
-      throw new Error("Invalid hotspots format");
+      console.warn("Invalid hotspots format from OpenAI");
+      return getFallbackResponse(promptHash);
     }
 
     const requested = hotspots.length;
@@ -114,22 +110,8 @@ Return 5-8 hotspots maximum.`;
     
     // If empty after sanitization, use fallback
     if (processed.length === 0) {
-      const fallbackHotspots = getFallbackHotspots();
-      const { kept: fallbackKept } = clampAndValidateHotspots(fallbackHotspots);
-      const fallbackProcessed = greedyDeoverlap(fallbackKept, { max: 8, iouThreshold: 0.4 });
-      
-      return {
-        hotspots: fallbackProcessed,
-        meta: {
-          engine: "phase7",
-          model: "gpt-4o-mini",
-          fallback: true,
-          requested: fallbackHotspots.length,
-          accepted: fallbackProcessed.length,
-          pruned: fallbackHotspots.length - fallbackProcessed.length,
-          promptHash
-        }
-      };
+      console.warn("No hotspots survived sanitization");
+      return getFallbackResponse(promptHash);
     }
 
     return {
@@ -146,26 +128,28 @@ Return 5-8 hotspots maximum.`;
     };
 
   } catch (error) {
-    console.error("OpenAI error:", error);
-    
-    // Fallback
-    const fallbackHotspots = getFallbackHotspots();
-    const { kept } = clampAndValidateHotspots(fallbackHotspots);
-    const processed = greedyDeoverlap(kept, { max: 8, iouThreshold: 0.4 });
-    
-    return {
-      hotspots: processed,
-      meta: {
-        engine: "phase7",
-        model: "gpt-4o-mini",
-        fallback: true,
-        requested: fallbackHotspots.length,
-        accepted: processed.length,
-        pruned: fallbackHotspots.length - processed.length,
-        promptHash
-      }
-    };
+    console.warn("OpenAI error:", error);
+    return getFallbackResponse(promptHash);
   }
+}
+
+function getFallbackResponse(promptHash: string) {
+  const fallbackHotspots = getFallbackHotspots();
+  const { kept } = clampAndValidateHotspots(fallbackHotspots);
+  const processed = greedyDeoverlap(kept, { max: 8, iouThreshold: 0.4 });
+  
+  return {
+    hotspots: processed,
+    meta: {
+      engine: "phase7" as const,
+      model: "gpt-4o-mini" as const,
+      fallback: true,
+      requested: fallbackHotspots.length,
+      accepted: processed.length,
+      pruned: fallbackHotspots.length - processed.length,
+      promptHash
+    }
+  };
 }
 
 function getFallbackHotspots(): Hotspot[] {

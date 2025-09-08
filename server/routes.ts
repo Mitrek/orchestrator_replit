@@ -145,19 +145,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     perIpLimiter,
     requestTimeout(45_000),
     async (req, res) => {
-      const startTime = Date.now();
-      
       try {
         const { 
           url, 
           device = "desktop", 
-          engine = process.env.AI_ENGINE || "phase7", 
-          parity = true,
+          engine,
+          parity = process.env.PARITY_MODE !== "false",
           knobs 
         } = req.body;
         
         if (!url || typeof url !== 'string') {
           return res.status(400).json({ error: "URL is required" });
+        }
+
+        // Check for legacy engine and reject
+        if (engine === "legacy") {
+          return res.status(400).json({ error: "legacy engine is disabled" });
         }
 
         // Import validation helpers
@@ -174,39 +177,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const result = await makeAiHeatmapImage({ 
           url, 
           device, 
-          engine: engine === "legacy" ? "legacy" : "phase7", 
           parity,
           knobs 
         });
-
-        const durationMs = Date.now() - startTime;
-        const { hotspotsToPoints } = await import("./services/hotspotsToPoints");
-        const pointsLength = result.meta.ai.accepted; // approximation for logging
-
-        // Log structured line
-        console.log(JSON.stringify({
-          route: "/api/v1/heatmap",
-          url,
-          device,
-          engine: result.meta.ai.engine,
-          parity,
-          durationMs,
-          points: pointsLength * 800, // rough estimate
-          hotspots: result.meta.ai.accepted,
-          fallback: result.meta.ai.fallback
-        }));
         
         return res.json(result);
       } catch (error: any) {
         console.error('[/api/v1/heatmap] error:', error?.stack || error);
         
-        if (error.message?.includes("checksum mismatch")) {
-          return res.status(500).json({ error: error.message });
-        }
-        
         return res.status(500).json({ 
-          error: "Failed to generate heatmap", 
-          details: error?.message 
+          error: "INTERNAL_ERROR", 
+          details: error?.message?.includes("screenshot") ? "screenshot provider failed" : "internal error"
         });
       }
     }

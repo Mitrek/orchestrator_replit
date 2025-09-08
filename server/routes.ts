@@ -339,6 +339,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     await handleDiagnostics(req, res);
   });
 
+  // QA golden generation (admin only)
+  app.post("/api/v1/qa/generate-goldens", async (req, res) => {
+    try {
+      const { generateGoldenImages } = await import("./qa");
+      await generateGoldenImages();
+      res.json({ success: true, message: "Golden images generated" });
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to generate golden images", details: error.message });
+    }
+  });
+
   // ------------------------- Subscription Checker ----------------------------
   app.get(
     "/api/subscription",

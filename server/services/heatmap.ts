@@ -210,13 +210,13 @@ export async function generateHeatmap(params: HeatmapArgs): Promise<HeatmapRespo
     return {
       base64,
       meta: {
+        phase: 'phase7',
+        engine: 'data',
         sourceUrl: params.url,
         device,
         viewport,
-        engine: 'ai',
         durationMs,
-        timestamp: new Date().toISOString(),
-        phase: 'phase6'
+        timestamp: new Date().toISOString()
       }
     };
   } catch (error: any) {
@@ -271,13 +271,13 @@ export async function generateDataHeatmap(params: DataHeatmapArgs): Promise<Heat
     return {
       base64,
       meta: {
+        phase: 'phase7',
+        engine: 'data',
         sourceUrl: params.url,
         device,
         viewport,
-        engine: 'data',
         durationMs,
-        timestamp: new Date().toISOString(),
-        phase: 'phase6'
+        timestamp: new Date().toISOString()
       }
     };
   } catch (error: any) {

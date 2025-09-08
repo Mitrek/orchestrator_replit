@@ -114,11 +114,26 @@ function isProviderConfigured(): boolean {
 }
 
 async function runGoldenQA(): Promise<Record<string, any>> {
-  // Placeholder for golden image QA
-  // This would implement deterministic rendering tests
-  return {
-    desktop: { psnr: 0, pass: false, reason: "not_implemented" },
-    tablet: { psnr: 0, pass: false, reason: "not_implemented" },
-    mobile: { psnr: 0, pass: false, reason: "not_implemented" }
-  };
+  try {
+    const { runGoldenQA: runQA } = await import("./qa");
+    const results = await runQA();
+    
+    // Convert array format to object format expected by diagnostics
+    const qaResults: Record<string, any> = {};
+    for (const result of results) {
+      qaResults[result.device] = {
+        psnr: result.psnr,
+        pass: result.pass,
+        reason: result.reason
+      };
+    }
+    
+    return qaResults;
+  } catch (error: any) {
+    return {
+      desktop: { psnr: 0, pass: false, reason: "qa_error" },
+      tablet: { psnr: 0, pass: false, reason: "qa_error" },
+      mobile: { psnr: 0, pass: false, reason: "qa_error" }
+    };
+  }
 }

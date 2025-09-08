@@ -2,6 +2,7 @@
 import { Request, Response, NextFunction } from "express";
 import { generateRequestId, logRequest } from "../logger";
 import { metrics } from "../metrics";
+import { addRecentError } from "../diagnostics";
 
 // Extend Express Request type
 declare global {
@@ -53,6 +54,22 @@ export function requestTracingMiddleware(req: Request, res: Response, next: Next
         cached: typeof body === 'string' ? undefined : JSON.parse(body)?.meta?.ai?.cached,
         errCode: res.statusCode >= 400 ? res.statusCode.toString() : undefined,
         errType: res.statusCode >= 400 ? getErrorType(res.statusCode) : undefined
+      });
+    }
+
+    // Record 4xx and 5xx errors in recent errors for diagnostics
+    if (res.statusCode >= 400) {
+      const errorMessage = typeof body === 'string' ? 
+        body : 
+        (JSON.parse(body)?.error || 'Unknown error');
+      
+      addRecentError({
+        ts: new Date().toISOString(),
+        route,
+        errType: getErrorType(res.statusCode),
+        errCode: res.statusCode.toString(),
+        message: errorMessage,
+        reqId: req.reqId
       });
     }
 

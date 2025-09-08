@@ -1,4 +1,3 @@
-
 import { getAiHotspotsPhase7 } from "./aiHotspots";
 import { getScreenshotBuffer } from "./screenshot";
 import { hotspotsToPoints } from "./hotspotsToPoints";
@@ -42,7 +41,7 @@ export async function makeAiHeatmapImage(params: {
   }
 
   const viewport = DEVICE_MAP[device];
-  
+
   // Clamp knobs to safe ranges
   const clampedKnobs = knobs ? {
     ...knobs,
@@ -64,8 +63,17 @@ export async function makeAiHeatmapImage(params: {
     const tempResult = await getAiHotspotsPhase7({ url, device, parity });
     const cacheKey = hotspotsCache.key({ url, device, parity, promptHash: tempResult.meta.promptHash });
     const cachedEntry = hotspotsCache.get(cacheKey);
-    
+
     if (cachedEntry) {
+      // Cache hit already tracked in hotspotsCache.get()
+      console.log(JSON.stringify({
+        route: "/api/v1/heatmap",
+        url,
+        device,
+        cached: true,
+        cacheHit: true
+      }));
+
       hotspotsResult = {
         hotspots: cachedEntry.hotspots,
         meta: { ...cachedEntry.meta, cached: true }
@@ -75,6 +83,7 @@ export async function makeAiHeatmapImage(params: {
       hotspotsResult = tempResult;
       hotspotsCache.set(cacheKey, hotspotsResult.hotspots, hotspotsResult.meta);
     }
+    // Cache miss already tracked in hotspotsCache.get()
   } else {
     hotspotsResult = await getAiHotspotsPhase7({ url, device, parity });
   }

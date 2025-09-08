@@ -9,6 +9,8 @@ import rateLimit from "express-rate-limit";
 import express from "express"; // Import express to use express.static
 import path from "path"; // Import path for path joining
 
+import { requestTracingMiddleware, addReqIdToResponse } from "./middleware/requestTracing";
+
 import { storage } from "./storage";
 import {
   loginSchema,
@@ -81,6 +83,9 @@ function authenticateToken(req: any, res: any, next: any) {
 
 // ----------------------------- Routes ----------------------------------------
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Add request tracing middleware
+  app.use(requestTracingMiddleware);
+  app.use(addReqIdToResponse);
   // ------------------------- Auth (email/password) ---------------------------
   app.post("/api/auth/register", apiLimiter, async (req, res) => {
     try {
@@ -327,6 +332,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Puppeteer diagnostics
   app.get("/api/v1/puppeteer/launch", diagPuppeteerLaunch);
+
+  // System diagnostics
+  app.get("/api/v1/heatmap/diagnostics", async (req, res) => {
+    const { handleDiagnostics } = await import("./diagnostics");
+    await handleDiagnostics(req, res);
+  });
 
   // ------------------------- Subscription Checker ----------------------------
   app.get(

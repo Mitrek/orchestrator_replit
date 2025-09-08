@@ -1,5 +1,8 @@
-
 import type { Hotspot } from "./validation";
+
+// Cache stats for metrics
+let cacheHits = 0;
+let cacheMisses = 0;
 
 interface CacheEntry {
   ts: number;
@@ -21,14 +24,19 @@ export function key(parts: {
 
 export function get(k: string): CacheEntry | undefined {
   const entry = cache.get(k);
-  if (!entry) return undefined;
-  
-  const now = Date.now();
-  if (now - entry.ts > TTL_MS) {
-    cache.delete(k);
+  if (!entry) {
+    cacheMisses++;
     return undefined;
   }
-  
+
+  // Check TTL
+  if (Date.now() - entry.ts > TTL_MS) {
+    cache.delete(k);
+    cacheMisses++;
+    return undefined;
+  }
+
+  cacheHits++;
   return entry;
 }
 
@@ -38,7 +46,7 @@ export function set(k: string, hotspots: Hotspot[], meta: any): void {
     hotspots,
     meta
   });
-  
+
   // Clean expired entries periodically
   if (cache.size > 100) {
     cleanup();
@@ -52,4 +60,30 @@ function cleanup(): void {
       cache.delete(key);
     }
   }
+}
+
+export function getCacheStats() {
+  const entries = cache.size;
+  const total = cacheHits + cacheMisses;
+  const hitRatio = total > 0 ? cacheHits / total : 0;
+
+  // Calculate average age
+  let totalAge = 0;
+  let count = 0;
+  const now = Date.now();
+
+  for (const entry of cache.values()) {
+    totalAge += now - entry.ts;
+    count++;
+  }
+
+  const avgAgeMs = count > 0 ? totalAge / count : 0;
+
+  return {
+    entries,
+    hits: cacheHits,
+    misses: cacheMisses,
+    hitRatio,
+    avgAgeMs
+  };
 }

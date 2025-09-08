@@ -31,6 +31,80 @@ export class ScreenshotError extends Error {
   }
 }
 
+export async function getScreenshotBuffer(
+  url: string, 
+  device: Device
+): Promise<{ png: Buffer; viewport: { width: number; height: number } }> {
+  const viewport = VIEWPORTS[device] ?? VIEWPORTS.desktop;
+  
+  let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
+
+  try {
+    const executablePath = await chromium.executablePath();
+
+    browser = await puppeteer.launch({
+      executablePath,
+      headless: chromium.headless,
+      args: chromium.args,
+      defaultViewport: chromium.defaultViewport,
+    });
+  } catch (e: any) {
+    throw new ScreenshotError(
+      "LAUNCH_FAILED",
+      `Chromium failed to launch: ${e?.message ?? e}`,
+    );
+  }
+
+  try {
+    const page = await browser.newPage();
+    await page.setViewport(viewport);
+
+    try {
+      await page.goto(url, { waitUntil: "networkidle2", timeout: 30_000 });
+    } catch (e: any) {
+      if (String(e?.name).includes("TimeoutError")) {
+        throw new ScreenshotError(
+          "NAVIGATION_TIMEOUT",
+          `Navigation timed out after 30s for ${url}`,
+        );
+      }
+      throw new ScreenshotError(
+        "NAVIGATION_FAILED",
+        `Failed to navigate to ${url}: ${e?.message ?? e}`,
+      );
+    }
+
+    await page.waitForTimeout(500);
+
+    let buf: Buffer;
+    try {
+      buf = (await page.screenshot({ type: "png", fullPage: false })) as Buffer;
+    } catch (e: any) {
+      throw new ScreenshotError(
+        "SCREENSHOT_FAILED",
+        `Failed to capture screenshot: ${e?.message ?? e}`,
+      );
+    }
+
+    return { 
+      png: buf, 
+      viewport: { width: viewport.width, height: viewport.height } 
+    };
+  } catch (e: any) {
+    if (e instanceof ScreenshotError) throw e;
+    throw new ScreenshotError(
+      "UNKNOWN",
+      `Unexpected error: ${e?.message ?? e}`,
+    );
+  } finally {
+    if (browser) {
+      try {
+        await browser.close();
+      } catch {}
+    }
+  }
+}
+
 export async function screenshotToBase64(opts: {
   url: string;
   device?: Device;

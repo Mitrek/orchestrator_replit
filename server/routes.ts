@@ -145,19 +145,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
     perIpLimiter,
     requestTimeout(45_000),
     async (req, res) => {
+      const startTime = Date.now();
+      
       try {
-        const { url, device } = req.body;
+        const { 
+          url, 
+          device = "desktop", 
+          engine = process.env.AI_ENGINE || "phase7", 
+          parity = true,
+          knobs 
+        } = req.body;
         
         if (!url || typeof url !== 'string') {
           return res.status(400).json({ error: "URL is required" });
         }
 
-        const { generateHeatmap } = await import("./services/heatmap");
-        const result = await generateHeatmap({ url, device });
+        // Import validation helpers
+        const { ALLOWED_DEVICES } = await import("./services/validation");
+        
+        if (!ALLOWED_DEVICES.includes(device as any)) {
+          return res.status(400).json({ 
+            error: "Invalid device", 
+            allowed: ALLOWED_DEVICES 
+          });
+        }
+
+        const { makeAiHeatmapImage } = await import("./services/aiHeatmap");
+        const result = await makeAiHeatmapImage({ 
+          url, 
+          device, 
+          engine: engine === "legacy" ? "legacy" : "phase7", 
+          parity,
+          knobs 
+        });
+
+        const durationMs = Date.now() - startTime;
+        const { hotspotsToPoints } = await import("./services/hotspotsToPoints");
+        const pointsLength = result.meta.ai.accepted; // approximation for logging
+
+        // Log structured line
+        console.log(JSON.stringify({
+          route: "/api/v1/heatmap",
+          url,
+          device,
+          engine: result.meta.ai.engine,
+          parity,
+          durationMs,
+          points: pointsLength * 800, // rough estimate
+          hotspots: result.meta.ai.accepted,
+          fallback: result.meta.ai.fallback
+        }));
         
         return res.json(result);
       } catch (error: any) {
         console.error('[/api/v1/heatmap] error:', error?.stack || error);
+        
+        if (error.message?.includes("checksum mismatch")) {
+          return res.status(500).json({ error: error.message });
+        }
+        
         return res.status(500).json({ 
           error: "Failed to generate heatmap", 
           details: error?.message 

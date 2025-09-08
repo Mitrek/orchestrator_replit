@@ -227,7 +227,14 @@ export function blurHeatBuffer(
   const { blurPx = 24 } = options;
   
   if (blurPx <= 0) {
-    return { buffer: new Float32Array(buffer), maxValue: Math.max(...buffer) };
+    // Find max value without spread operator to avoid stack overflow
+    let maxValue = 0;
+    for (let i = 0; i < buffer.length; i++) {
+      if (buffer[i] > maxValue) {
+        maxValue = buffer[i];
+      }
+    }
+    return { buffer: new Float32Array(buffer), maxValue };
   }
   
   // Simple box blur implementation
@@ -270,29 +277,94 @@ export function blurHeatBuffer(
     }
   }
   
-  const maxValue = Math.max(...result);
+  // Find max value without spread operator to avoid stack overflow
+  let maxValue = 0;
+  for (let i = 0; i < result.length; i++) {
+    if (result[i] > maxValue) {
+      maxValue = result[i];
+    }
+  }
   
   return { buffer: result, maxValue };
 }
 
 /**
- * Convert heat buffer to grayscale PNG base64
+ * Downsample heat buffer using average pooling
+ */
+function downsampleHeatBuffer(
+  buffer: Float32Array,
+  width: number,
+  height: number,
+  newWidth: number,
+  newHeight: number
+): Float32Array {
+  const result = new Float32Array(newWidth * newHeight);
+  const scaleX = width / newWidth;
+  const scaleY = height / newHeight;
+  
+  for (let y = 0; y < newHeight; y++) {
+    for (let x = 0; x < newWidth; x++) {
+      let sum = 0;
+      let count = 0;
+      
+      // Sample from the original buffer using average pooling
+      const startX = Math.floor(x * scaleX);
+      const endX = Math.min(width, Math.ceil((x + 1) * scaleX));
+      const startY = Math.floor(y * scaleY);
+      const endY = Math.min(height, Math.ceil((y + 1) * scaleY));
+      
+      for (let sy = startY; sy < endY; sy++) {
+        for (let sx = startX; sx < endX; sx++) {
+          sum += buffer[sy * width + sx];
+          count++;
+        }
+      }
+      
+      result[y * newWidth + x] = count > 0 ? sum / count : 0;
+    }
+  }
+  
+  return result;
+}
+
+/**
+ * Convert heat buffer to grayscale PNG base64 with safe downscaling
  */
 export function heatBufferToGreyscalePngBase64(
   buffer: Float32Array,
   width: number,
   height: number
 ): string {
-  const canvas = createCanvas(width, height);
-  const ctx = canvas.getContext("2d");
-  const imageData = ctx.createImageData(width, height);
+  const MAX_DEBUG_MEGA_PIXELS = 3_000_000;
+  const pixels = width * height;
   
-  // Find max value for normalization
-  const maxValue = Math.max(...buffer);
+  let finalBuffer = buffer;
+  let finalWidth = width;
+  let finalHeight = height;
+  
+  // Downscale if too large to prevent memory issues
+  if (pixels > MAX_DEBUG_MEGA_PIXELS) {
+    const scale = Math.sqrt(MAX_DEBUG_MEGA_PIXELS / pixels);
+    finalWidth = Math.max(1, Math.floor(width * scale));
+    finalHeight = Math.max(1, Math.floor(height * scale));
+    finalBuffer = downsampleHeatBuffer(buffer, width, height, finalWidth, finalHeight);
+  }
+  
+  const canvas = createCanvas(finalWidth, finalHeight);
+  const ctx = canvas.getContext("2d");
+  const imageData = ctx.createImageData(finalWidth, finalHeight);
+  
+  // Find max value for normalization (avoid stack overflow)
+  let maxValue = 0;
+  for (let i = 0; i < finalBuffer.length; i++) {
+    if (finalBuffer[i] > maxValue) {
+      maxValue = finalBuffer[i];
+    }
+  }
   
   // Convert to grayscale pixels
-  for (let i = 0; i < buffer.length; i++) {
-    const value = buffer[i];
+  for (let i = 0; i < finalBuffer.length; i++) {
+    const value = finalBuffer[i];
     const normalized = maxValue > 0 ? value / maxValue : 0;
     const gray = Math.round(normalized * 255);
     

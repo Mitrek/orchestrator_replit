@@ -158,12 +158,21 @@ export async function postHeatmapData(req: Request, res: Response) {
 
     // Apply blur if specified
     let blurDurationMs = 0;
+    let nonZeroCountBlurred = heatResult.nonZeroCount; // default to pre-blur count
     if (blurPx > 0) {
       const tBlur = performance.now();
       try {
         const blurResult = blurHeatBuffer(heatResult.buffer, width, height, { blurPx });
         heatResult.buffer = blurResult.buffer;
         heatResult.maxValue = blurResult.maxValue;
+        
+        // Count non-zero pixels after blur
+        nonZeroCountBlurred = 0;
+        for (let i = 0; i < heatResult.buffer.length; i++) {
+          if (heatResult.buffer[i] > 0) {
+            nonZeroCountBlurred++;
+          }
+        }
       } catch (err: any) {
         jlog({
           ts: new Date().toISOString(),
@@ -237,6 +246,7 @@ export async function postHeatmapData(req: Request, res: Response) {
         height,
         maxValue: heatResult.maxValue,
         nonZeroCount: heatResult.nonZeroCount,
+        nonZeroCountBlurred,
         sample: samplePoints
       },
       debug: heatLayerGray ? { heatLayerGray } : {},

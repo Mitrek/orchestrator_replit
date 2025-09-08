@@ -1,0 +1,147 @@
+Copy–paste this for the Replit assistant. It’s explicit and surgical—no guessing.
+
+---
+
+# Fix the crash and finish Step 3 (exact edits)
+
+## 1) `server/controllers/heatmap.data.ts`
+
+**Problem:** duplicate declarations (`returnMode` and possibly other knobs). Keep **one** source of truth: the parsed body.
+
+**Do THIS:**
+
+* Find the handler (e.g., `export async function postHeatmapData(...)`).
+* Replace the *multiple* `const ... = req.body...` lines with **one** destructure from the schema parse.
+* Do **NOT** re-declare any of these names later in the function.
+
+**Patch (model the top of the handler like this):**
+
+```ts
+// ✅ One single parse; no later re-declarations of these names
+const parsed = heatmapDataRequestSchema.parse(req.body);
+const {
+  url,
+  device = "desktop",
+  dataPoints,
+  // step-2 knobs
+  radiusPx = 40,
+  blurPx = 24,
+  intensityPerPoint = 1.0,
+  debugHeat = false,
+  // step-3 knobs
+  alpha = 0.60,
+  blendMode = "lighter",          // "lighter" | "source-over"
+  ramp = "classic",               // "classic" | "soft"
+  clipLowPercent = 0,
+  clipHighPercent = 100,
+  // output
+  returnMode = "base64"           // "base64" | "url"
+} = parsed;
+
+// ❌ Remove any lines like:
+// const returnMode = req.body.returnMode ?? "base64";
+// const alpha = ...; const ramp = ...; const blendMode = ...;
+// const radiusPx = ...; const blurPx = ...; etc.
+// Just use the variables above.
+```
+
+**Also verify later in the file:**
+
+* When you build the response, you use those same variables (no `const` re-declarations).
+* If you need to tweak a value, **reassign** (e.g., `let a = alpha`) or use a different local name—don’t redeclare the same identifier.
+
+---
+
+## 2) `server/index.ts`
+
+**Problem:** bad/duplicate import of `path` caused by `import path from "url";`.
+
+**Do THIS:**
+
+* Keep these imports only:
+
+```ts
+import express from "express";
+import path from "node:path";
+import { fileURLToPath } from "url";
+import fs from "node:fs";
+```
+
+* **Remove** any `import path from "url";` line.
+
+**Ensure the heatmaps dir exists BEFORE static mount (no top-level await):**
+
+```ts
+const __filename = fileURLToPath(import.meta.url);
+const __dirname  = path.dirname(__filename);
+
+// ✅ create once, sync, safe
+fs.mkdirSync(path.join(__dirname, "..", "public", "heatmaps"), { recursive: true });
+
+// static
+app.use("/heatmaps", express.static(path.join(__dirname, "..", "public", "heatmaps")));
+```
+
+---
+
+## 3) `server/services/imaging.ts`
+
+**Sanity check only (don’t change if already correct):**
+
+* Functions used by the controller must be **exported** (named exports), e.g.:
+
+  * `mapNormalizedPointsToPixels`
+  * `accumulateHeat`
+  * `blurHeatBuffer`
+  * `heatBufferToGreyscalePngBase64`
+  * `heatBufferToColorRgba`
+  * `compositeHeatOverScreenshot`
+* No duplicate function names or duplicate `export`ed identifiers.
+
+---
+
+## 4) Rebuild / Run
+
+In the Replit “Run” config, keep:
+
+```
+npm run dev
+```
+
+Then watch the console. The previous fatal error:
+
+```
+The symbol "returnMode" has already been declared
+```
+
+must be gone.
+
+---
+
+## 5) Quick validation (no images yet)
+
+From your terminal:
+
+```powershell
+$BASE="https://<your-replit-domain>"
+$URL="https://example.com/"
+$body = @{
+  url        = $URL
+  device     = "desktop"
+  dataPoints = @(@{ x=0.5; y=0.5 })
+  returnMode = "base64"
+} | ConvertTo-Json -Depth 5
+
+Invoke-RestMethod -Method POST -Uri "$BASE/api/v1/heatmap/data" -ContentType "application/json" -Body $body | ConvertTo-Json -Depth 6
+```
+
+Expected: 200 JSON with `meta.phase` = `"phase5.step3"` and `image` present.
+
+---
+
+### If it *still* crashes:
+
+* Paste the **new** console error. It will point to the next duplicate (often `alpha`, `ramp`, or `blendMode` if they were re-declared elsewhere).
+* Fix them using the **same rule**: **declare once** from the parsed body; never re-declare with `const` later in the same scope.
+
+This will unbrick the app and complete Step 3.

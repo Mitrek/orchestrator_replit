@@ -139,36 +139,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ------------------------- Heatmap (API) -------------------------
-  // Main endpoint uses screenshot
+  // AI-assisted heatmap endpoint
   app.post(
     "/api/v1/heatmap",
     perIpLimiter,
-    requestTimeout(45_000), // give Chromium time; 45s is safe
-    postHeatmapScreenshot,
-  );
-
-  // Keep a separate debug route if you like
-  app.post(
-    "/api/v1/heatmap/screenshot",
-    perIpLimiter,
     requestTimeout(45_000),
-    postHeatmapScreenshot,
+    async (req, res) => {
+      try {
+        const { url, device } = req.body;
+        
+        if (!url || typeof url !== 'string') {
+          return res.status(400).json({ error: "URL is required" });
+        }
+
+        const { generateHeatmap } = await import("./services/heatmap");
+        const result = await generateHeatmap({ url, device });
+        
+        return res.json(result);
+      } catch (error: any) {
+        console.error('Heatmap generation error:', error);
+        return res.status(500).json({ error: "Failed to generate heatmap" });
+      }
+    }
   );
 
-  // New overlay endpoint that draws rectangle on screenshot
-  app.post(
-    "/api/v1/heatmap/overlay",
-    perIpLimiter,
-    requestTimeout(45_000),
-    postHeatmap,
-  );
-
-  // New endpoint to receive heatmap data
+  // Data-driven heatmap endpoint
   app.post(
     "/api/v1/heatmap/data",
     perIpLimiter,
-    requestTimeout(15_000), // shorter timeout for data processing
-    postHeatmapData,
+    requestTimeout(45_000),
+    async (req, res) => {
+      try {
+        const { url, device, dataPoints } = req.body;
+        
+        if (!url || typeof url !== 'string') {
+          return res.status(400).json({ error: "URL is required" });
+        }
+
+        if (!Array.isArray(dataPoints) || dataPoints.length === 0) {
+          return res.status(400).json({ error: "dataPoints[] required" });
+        }
+
+        const { generateDataHeatmap } = await import("./services/heatmap");
+        const result = await generateDataHeatmap({ url, device, dataPoints });
+        
+        return res.json(result);
+      } catch (error: any) {
+        console.error('Data heatmap generation error:', error);
+        return res.status(500).json({ error: "Failed to generate heatmap" });
+      }
+    }
   );
 
   app.get("/api/v1/heatmap/dummy", (_req, res) => {

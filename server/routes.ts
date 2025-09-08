@@ -204,6 +204,96 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Puppeteer diagnostics
   app.get("/api/v1/puppeteer/launch", diagPuppeteerLaunch);
 
+  // ------------------------- Hotspots JSON API --------------------------------
+  app.post("/api/v1/heatmap/hotspots", perIpLimiter, requestTimeout(30_000), async (req, res) => {
+    const startTime = Date.now();
+    
+    try {
+      const { url, device = "desktop", engine, parity = true } = req.body;
+      
+      if (!url || typeof url !== 'string') {
+        return res.status(400).json({ error: "URL is required" });
+      }
+
+      // Validate device
+      const { deviceSchema, DEVICE_MAP } = await import("./services/validation");
+      const validDevice = deviceSchema.safeParse(device);
+      if (!validDevice.success) {
+        return res.status(400).json({ 
+          error: `Invalid device. Allowed: ${deviceSchema.options.join(', ')}` 
+        });
+      }
+
+      // Determine engine
+      const selectedEngine = engine || process.env.AI_ENGINE || "phase7";
+      
+      let result;
+      if (selectedEngine === "legacy") {
+        const { getAiHotspotsLegacy } = await import("./services/aiHotspots.legacy");
+        result = await getAiHotspotsLegacy({ url, device: validDevice.data, parity });
+      } else {
+        const { getAiHotspotsPhase7 } = await import("./services/aiHotspots");
+        result = await getAiHotspotsPhase7({ url, device: validDevice.data, parity });
+      }
+
+      // Belt and suspenders: re-run sanitization
+      const { clampAndValidateHotspots, greedyDeoverlap } = await import("./services/validation");
+      const { kept } = clampAndValidateHotspots(result.hotspots);
+      const finalHotspots = parity ? 
+        greedyDeoverlap(kept.filter(h => h.confidence >= 0.25), { max: 8, iouThreshold: 0.4 }) : 
+        kept;
+
+      const durationMs = Date.now() - startTime;
+      const viewport = DEVICE_MAP[validDevice.data];
+
+      // Structured logging
+      console.log(JSON.stringify({
+        route: "/api/v1/heatmap/hotspots",
+        url,
+        device: validDevice.data,
+        engine: selectedEngine,
+        parity,
+        durationMs,
+        accepted: finalHotspots.length,
+        pruned: result.hotspots.length - finalHotspots.length,
+        fallback: 'fallback' in result.meta ? result.meta.fallback : false
+      }));
+
+      const response = {
+        hotspots: finalHotspots,
+        meta: {
+          phase: "phase7",
+          engine: "ai",
+          device: validDevice.data,
+          viewport,
+          ai: {
+            ...result.meta,
+            parity
+          },
+          timestamp: new Date().toISOString(),
+          durationMs
+        }
+      };
+
+      res.json(response);
+    } catch (error: any) {
+      const durationMs = Date.now() - startTime;
+      console.error('[/api/v1/heatmap/hotspots] error:', error?.stack || error);
+      
+      // Check for specific legacy checksum error
+      if (error?.message?.includes("checksum mismatch")) {
+        return res.status(500).json({ 
+          error: "Legacy engine checksum mismatch (refuse to run)" 
+        });
+      }
+      
+      return res.status(500).json({ 
+        error: "Failed to generate hotspots", 
+        details: error?.message 
+      });
+    }
+  });
+
   // ------------------------- Subscription Checker ----------------------------
   app.get(
     "/api/subscription",

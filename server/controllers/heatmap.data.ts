@@ -1,0 +1,1 @@
+const { url, device = "desktop", returnMode = "base64", dataPoints } = parsed;

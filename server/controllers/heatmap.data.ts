@@ -9,8 +9,13 @@ import {
   mapNormalizedPointsToPixels, 
   accumulateHeat, 
   blurHeatBuffer, 
-  heatBufferToGreyscalePngBase64 
+  heatBufferToGreyscalePngBase64,
+  heatBufferToColorRgba,
+  compositeHeatOverScreenshot
 } from "../services/imaging";
+import { nanoid as generateId } from "nanoid";
+import fs from "node:fs/promises";
+import path from "node:path";
 
 function jlog(o: any) {
   console.log(JSON.stringify(o));
@@ -31,6 +36,14 @@ export async function postHeatmapData(req: Request, res: Response) {
     const intensityPerPoint = req.body.intensityPerPoint ?? 1.0;
     const blurPx = req.body.blurPx ?? 24;
     const debugHeat = req.body.debugHeat ?? false;
+    
+    // Step 3 knobs for colorization and compositing
+    const alpha = Math.max(0, Math.min(1, req.body.alpha ?? 0.60));
+    const blendMode = req.body.blendMode ?? "lighter";
+    const ramp = req.body.ramp ?? "classic";
+    const clipLowPercent = Math.max(0, Math.min(100, req.body.clipLowPercent ?? 0));
+    const clipHighPercent = Math.max(0, Math.min(100, req.body.clipHighPercent ?? 100));
+    const returnMode = req.body.returnMode ?? "base64";
 
     jlog({
       ts: new Date().toISOString(),
@@ -211,6 +224,115 @@ export async function postHeatmapData(req: Request, res: Response) {
       }
     }
 
+    // Step 3: Colorize heat buffer
+    let heatRgba: Uint8ClampedArray;
+    const tColorize = performance.now();
+    try {
+      heatRgba = heatBufferToColorRgba(heatResult.buffer, width, height, {
+        ramp,
+        clipLowPercent,
+        clipHighPercent
+      });
+      
+      jlog({
+        ts: new Date().toISOString(),
+        level: "info",
+        requestId,
+        route,
+        phase: "colorize",
+        ramp,
+        clipLowPercent,
+        clipHighPercent
+      });
+    } catch (err: any) {
+      jlog({
+        ts: new Date().toISOString(),
+        level: "error",
+        requestId,
+        route,
+        phase: "colorize_failed",
+        errorMessage: err?.message,
+      });
+
+      return res.status(500).json({
+        error: "colorize_failed",
+        phase: "colorize",
+        details: err?.message || String(err),
+        requestId
+      });
+    }
+    const colorizeDurationMs = Math.round(performance.now() - tColorize);
+
+    // Step 4: Composite heat over screenshot
+    let finalImage: string;
+    const tComposite = performance.now();
+    try {
+      if (returnMode === "url") {
+        // Ensure public/heatmaps directory exists
+        const heatmapDir = path.join(process.cwd(), "public", "heatmaps");
+        await fs.mkdir(heatmapDir, { recursive: true });
+        
+        // Generate filename
+        const timestamp = Date.now();
+        const shortId = generateId(8);
+        const filename = `heatmap-${timestamp}-${shortId}.png`;
+        const filepath = path.join(heatmapDir, filename);
+        
+        // Composite and save
+        const compositedBase64 = compositeHeatOverScreenshot({
+          screenshotPngBase64: screenshotResult.image,
+          heatRgba,
+          width,
+          height,
+          alpha,
+          blendMode
+        });
+        
+        // Extract base64 data and save to file
+        const base64Data = compositedBase64.replace(/^data:image\/png;base64,/, "");
+        await fs.writeFile(filepath, Buffer.from(base64Data, "base64"));
+        
+        finalImage = `/heatmaps/${filename}`;
+      } else {
+        // Return base64 directly
+        finalImage = compositeHeatOverScreenshot({
+          screenshotPngBase64: screenshotResult.image,
+          heatRgba,
+          width,
+          height,
+          alpha,
+          blendMode
+        });
+      }
+      
+      jlog({
+        ts: new Date().toISOString(),
+        level: "info",
+        requestId,
+        route,
+        phase: "composite",
+        alpha,
+        blendMode
+      });
+    } catch (err: any) {
+      jlog({
+        ts: new Date().toISOString(),
+        level: "error",
+        requestId,
+        route,
+        phase: "composite_failed",
+        errorMessage: err?.message,
+      });
+
+      return res.status(500).json({
+        error: "composite_failed",
+        phase: "composite",
+        details: err?.message || String(err),
+        requestId
+      });
+    }
+    const compositeDurationMs = Math.round(performance.now() - tComposite);
+
     const durationMs = Math.round(performance.now() - t0);
 
     jlog({
@@ -224,7 +346,9 @@ export async function postHeatmapData(req: Request, res: Response) {
       timings: {
         map: mapDurationMs,
         accumulate: accumulateDurationMs,
-        blur: blurDurationMs
+        blur: blurDurationMs,
+        colorize: colorizeDurationMs,
+        composite: compositeDurationMs
       },
       width,
       height,
@@ -239,17 +363,8 @@ export async function postHeatmapData(req: Request, res: Response) {
       yPx: pixelPoints[index].yPx
     }));
 
-    return res.status(200).json({
-      image: screenshotResult.image,
-      heat: {
-        width,
-        height,
-        maxValue: heatResult.maxValue,
-        nonZeroCount: heatResult.nonZeroCount,
-        nonZeroCountBlurred,
-        sample: samplePoints
-      },
-      debug: heatLayerGray ? { heatLayerGray } : {},
+    // Prepare response based on returnMode
+    const responseData: any = {
       meta: {
         sourceUrl: url,
         device,
@@ -257,9 +372,23 @@ export async function postHeatmapData(req: Request, res: Response) {
         radiusPx,
         intensityPerPoint,
         blurPx,
-        phase: "phase5.step2"
-      }
-    });
+        alpha,
+        blendMode,
+        ramp,
+        clipLowPercent,
+        clipHighPercent,
+        phase: "phase5.step3"
+      },
+      debug: heatLayerGray ? { heatLayerGray } : {}
+    };
+
+    if (returnMode === "url") {
+      responseData.url = finalImage;
+    } else {
+      responseData.image = finalImage;
+    }
+
+    return res.status(200).json(responseData);
 
   } catch (err: any) {
     const durationMs = Math.round(performance.now() - t0);

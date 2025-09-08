@@ -1,0 +1,196 @@
+Perfect—I unpacked your project and looked at the actual structure. Your live endpoints are solid; the only thing failing is the **QA/goldens** path. Below is a **surgical, file-by-file fix plan** for your assistant to make the QA hooks pass **without touching** the working /heatmap routes.
+
+---
+
+# What I found (quick context)
+
+* Project root: `Cimple/`
+* QA-related files already present:
+
+  * `server/services/renderer.ts`  ✅ (has named exports incl. `renderDataHeatmapToCanvas`, `computePSNR`, `renderDeterministicQA`, etc.)
+  * `server/qa.ts` ✅ (exports `runGoldenQA`, `generateGoldenImages`)
+  * `server/diagnostics.ts` ✅ (calls `runGoldenQA()` when `?qa=1`)
+  * Route for goldens: `POST /api/v1/qa/generate-goldens` in `server/routes.ts` ✅
+* Fixtures present: `public/qa/base-desktop.png`, `base-tablet.png`, `base-mobile.png` ✅
+* Fixtures **missing**: `public/qa/golden-*.png` ❌
+* Diagnostics shows `providerConfigured:false` (fine; QA must be provider-free).
+* Smoke still reports `qa_error` because the QA block can’t complete comparison.
+
+---
+
+# Phase-8 QA: Fix & Stabilize (do exactly this)
+
+## 1) Make QA independent from any provider/AI (renderer.ts)
+
+**File:** `server/services/renderer.ts`
+
+* ✅ Keep using `@napi-rs/canvas` only.
+* Ensure these **named exports** exist and work (they do, just confirm):
+
+  * `getViewportForDevice(device)`
+  * `makeDeterministicPoints()`
+  * `renderDataHeatmapToCanvas(screenshot, viewport, points, opts)`
+  * `renderDeterministicQA(url, device)` → **must**:
+
+    * read base fixture via `loadQABaseScreenshot(device)`
+    * use `makeDeterministicPoints()`
+    * call `renderDataHeatmapToCanvas()` with fixed knobs (`alpha=0.6`, `radius=32`, `blend="lighter"`)
+    * return `{ png: Buffer, width, height }`
+  * `loadQABaseScreenshot(device)`:
+
+    * Path must be robust. Use a project-root resolution, not a fragile CWD:
+
+      * **Fix**: `const basePath = path.resolve(process.cwd(), "Cimple", "public", "qa", \`base-\${device}.png\`)\`
+      * Or derive from this module: `path.resolve(import.meta.dirname, "..", "public", "qa", \`base-\${device}.png\`)\`
+    * If file missing, throw an error: `Missing QA base fixture: <path>`
+  * `computePSNR(a, b, width, height)`
+
+    * If `MSE == 0`, return `PSNR = 100` (avoid NaN).
+* **Why**: QA must not talk to Thum.io/ScreenshotMachine/AI; it should render off local base images only.
+
+**Acceptance check**
+
+* Importing `./services/renderer` from anywhere should show **all** named exports (no “does not provide an export” errors).
+* Calling `renderDeterministicQA("https://example.com","desktop")` returns `{ png, width:1920, height:1080 }` without hitting the network.
+
+---
+
+## 2) Generate goldens via route (qa.ts + routes.ts)
+
+**File:** `server/qa.ts`
+
+* Confirm the function **signature and return**:
+
+  * `export async function generateGoldenImages(): Promise<Array<{device:string; success:boolean; size?:{width:number;height:number}; error?:string}>>`
+  * It should loop devices `["desktop","tablet","mobile"]`, call `renderDeterministicQA`, and **write**:
+
+    * `public/qa/golden-desktop.png` (1920×1080)
+    * `public/qa/golden-tablet.png` (1024×768)
+    * `public/qa/golden-mobile.png` (414×896)
+  * Return the **array of results** (your route returns it to the client).
+* If `public/qa/` doesn’t exist, `fs.mkdir(..., { recursive:true })`.
+
+**File:** `server/routes.ts`
+
+* Route is already present:
+
+  ```ts
+  app.post("/api/v1/qa/generate-goldens", async (req, res) => {
+    try {
+      const { generateGoldenImages } = await import("./qa");
+      const results = await generateGoldenImages();
+      res.json({ success: true, message: "Golden images generated", results });
+    } catch (error:any) {
+      res.status(500).json({ error: "Failed to generate golden images", details: error.message });
+    }
+  });
+  ```
+* **No change** needed unless the import name differs; make sure it’s `generateGoldenImages` (not a typo).
+
+**Acceptance check**
+
+* Hitting `POST /api/v1/qa/generate-goldens` returns 200 and writes all `golden-*.png` in `public/qa/`.
+* No dependency on provider or AI.
+
+---
+
+## 3) Robust QA run from diagnostics (diagnostics.ts + qa.ts)
+
+**File:** `server/qa.ts`
+
+* `export async function runGoldenQA(): Promise<QAResult[]>` should, for each device:
+
+  1. Read `public/qa/golden-${device}.png`. If missing, return `{pass:false, reason:"missing_golden", goldenFound:false}`.
+  2. Call `renderDeterministicQA(QA_URL, device)` → returns `{ png, width, height }`.
+  3. **Dimension check**: if `(width,height) != viewport`, return `{pass:false, reason:"dimension_mismatch", goldenSize, renderSize}`.
+  4. Compute `{ mse, psnr } = computePSNR(current, golden, width, height)`; `pass = psnr >= 35`.
+  5. Return all diagnostic fields:
+
+     ```json
+     {
+       "device":"desktop",
+       "goldenFound":true,
+       "goldenSize":{"width":1920,"height":1080},
+       "renderSize":{"width":1920,"height":1080},
+       "mse":123.4,
+       "psnr":38.7,
+       "pass":true
+     }
+     ```
+* **Important**: do **not** throw; always return a structured failure reason (`missing_golden`, `dimension_mismatch`, `psnr_nan`, `render_failed`).
+
+**File:** `server/diagnostics.ts`
+
+* The wrapper already maps `runGoldenQA()` results. Keep the try/catch, but only return the all-`qa_error` fallback if `import("./qa")` blows up.
+* Add `verbose` passthrough if you want (optional), but not required for PASS.
+
+**Acceptance check**
+
+* `GET /api/v1/heatmap/diagnostics?qa=1` returns a `qa` array with entries per device and **no** generic `qa_error` reasons.
+* With goldens present and renderer deterministic, `pass:true` & `psnr >= 35`.
+
+---
+
+## 4) Pathing gotcha (very likely your current `qa_error`)
+
+From your earlier error and current layout, the most common cause is **path resolution** of fixtures. Fix it once:
+
+* Create a small helper (optional) `server/utils/paths.ts`:
+
+  ```ts
+  import path from "path";
+  export const projectRoot = process.env.PROJECT_ROOT || path.resolve(process.cwd(), "Cimple");
+  export const qaDir = path.resolve(projectRoot, "public", "qa");
+  ```
+* Use `qaDir` everywhere (`loadQABaseScreenshot`, `generateGoldenImages`, `runGoldenQA`) to avoid CWD differences between dev/prod/build.
+* If you don’t like an extra file, **hard-resolve** with `path.resolve(process.cwd(), "Cimple", "public", "qa")`.
+
+---
+
+## 5) Re-run (what you should see)
+
+1. **Generate goldens**
+
+   ```powershell
+   $BASE = "https://<your-domain>.spock.replit.dev"
+   $body = @{ url = "https://www.example.com"; devices = @("desktop","tablet","mobile") }
+   Invoke-WebRequest -Uri "$BASE/api/v1/qa/generate-goldens" -Method POST -ContentType "application/json" `
+     -Body ($body | ConvertTo-Json -Depth 10) | Select -Expand Content
+   ```
+
+   **Expect:** `success:true`, results for each device, files written to `public/qa/golden-*.png`.
+
+2. **Diagnostics QA**
+
+   ```powershell
+   Invoke-WebRequest -Uri "$BASE/api/v1/heatmap/diagnostics?qa=1&verbose=1" -Method GET | Select -Expand Content
+   ```
+
+   **Expect per device:** `goldenFound:true`, matching sizes, `psnr >= 35`, `pass:true`.
+
+3. **Your existing Phase-8 smoke test**
+   Keep `$EXPECT_QA = $true`. “Test 7” should flip to **PASS**.
+
+---
+
+## 6) Don’t change what’s working
+
+* **Do not** modify `/api/v1/heatmap` or `/api/v1/heatmap/data` envelopes—they’re already passing.
+* QA must remain **provider-free** so it works even when `providerConfigured:false`.
+
+---
+
+## 7) If anything still fails
+
+* If `/api/v1/qa/generate-goldens` errors: it’s almost always a **missing named export** or **path resolution**. Verify the import name and the absolute path used by `fs`.
+* If diagnostics still returns `qa_error`: log the inner exception in `runGoldenQA()` and return a specific `reason` (`missing_golden`, `dimension_mismatch`, `render_failed`, `psnr_nan`) so we can pinpoint fast.
+
+---
+
+### Minimal success criteria
+
+* `POST /api/v1/qa/generate-goldens` → 200 + files present.
+* `GET /api/v1/heatmap/diagnostics?qa=1` → per-device entry with `pass:true` and `psnr >= 35`.
+* Phase-8 smoke test: all tests **PASS**.
+
+If you want, I can also provide a **one-screen “goldens sanity” script** that lists existence/size/hash of `base-*` and `golden-*` to run before the smoke—totally optional.

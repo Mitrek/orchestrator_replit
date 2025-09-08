@@ -6,11 +6,9 @@ import { setupVite, serveStatic, log } from "./vite";
 import { registerPingRoute } from "./routes/ping";
 // server/index.ts (very top – first imports)
 import { neonConfig } from "@neondatabase/serverless";
-import path from "url";
+import path from "path";
 import { fileURLToPath } from "url";
 import { buildHealthReport } from "./health"; // <-- added
-import fs from "node:fs/promises";
-import path from "node:path";
 
 // Hard block any WS usage if some file tries to set it up later
 // @ts-ignore

@@ -9,7 +9,9 @@ import {
   mapNormalizedPointsToPixels, 
   accumulateHeat, 
   blurHeatBuffer, 
-  heatBufferToGreyscalePngBase64 
+  heatBufferToGreyscalePngBase64,
+  heatBufferToColorRgba,
+  compositeHeatOverScreenshot
 } from "../services/imaging";
 
 function jlog(o: any) {
@@ -24,13 +26,28 @@ export async function postHeatmapData(req: Request, res: Response) {
   try {
     // Validate input
     const parsed = heatmapDataRequestSchema.parse(req.body);
-    const { url, device = "desktop", returnMode = "base64", dataPoints } = parsed;
     
-    // Extract optional knobs from request body
-    const radiusPx = req.body.radiusPx ?? 40;
-    const intensityPerPoint = req.body.intensityPerPoint ?? 1.0;
-    const blurPx = req.body.blurPx ?? 24;
-    const debugHeat = req.body.debugHeat ?? false;
+    // Single source of truth - destructure all knobs at once
+    const {
+      url,
+      device = "desktop",
+      dataPoints,
+      radiusPx = 40,
+      blurPx = 24,
+      intensityPerPoint = 1.0,
+      debugHeat = false,
+
+      // Step-3 knobs (new)
+      alpha: alphaRaw = 0.60,
+      blendMode = "lighter",
+      ramp = "classic",
+      clipLowPercent = 0,
+      clipHighPercent = 100,
+      returnMode = "base64"
+    } = parsed;
+    
+    // Clamp alpha
+    const alpha = Math.max(0, Math.min(1, alphaRaw));
 
     jlog({
       ts: new Date().toISOString(),
@@ -193,6 +210,93 @@ export async function postHeatmapData(req: Request, res: Response) {
       blurDurationMs = Math.round(performance.now() - tBlur);
     }
 
+    // Step 3: Colorize heat buffer
+    let heatRgba: Uint8ClampedArray;
+    const tColorize = performance.now();
+    try {
+      heatRgba = heatBufferToColorRgba(heatResult.buffer, width, height, {
+        ramp,
+        clipLowPercent,
+        clipHighPercent
+      });
+    } catch (err: any) {
+      jlog({
+        ts: new Date().toISOString(),
+        level: "error",
+        requestId,
+        route,
+        phase: "colorize_failed",
+        errorMessage: err?.message,
+      });
+
+      return res.status(500).json({
+        error: "colorize_failed",
+        phase: "colorize",
+        details: err?.message || String(err),
+        requestId
+      });
+    }
+    const colorizeDurationMs = Math.round(performance.now() - tColorize);
+
+    // Step 3: Composite heat over screenshot
+    let finalImage: string;
+    const tComposite = performance.now();
+    try {
+      finalImage = await compositeHeatOverScreenshot({
+        screenshotPngBase64: screenshotResult.image,
+        heatRgba,
+        width,
+        height,
+        alpha,
+        blendMode
+      });
+    } catch (err: any) {
+      jlog({
+        ts: new Date().toISOString(),
+        level: "error",
+        requestId,
+        route,
+        phase: "composite_failed",
+        errorMessage: err?.message,
+      });
+
+      return res.status(500).json({
+        error: "composite_failed",
+        phase: "composite",
+        details: err?.message || String(err),
+        requestId
+      });
+    }
+    const compositeDurationMs = Math.round(performance.now() - tComposite);
+
+    // Handle URL mode by saving to file
+    let responseImage = finalImage;
+    if (returnMode === "url") {
+      try {
+        const timestamp = Date.now();
+        const shortId = nanoid(8);
+        const filename = `heatmap-${timestamp}-${shortId}.png`;
+        const filepath = `public/heatmaps/${filename}`;
+        
+        const base64Data = finalImage.replace(/^data:image\/png;base64,/, '');
+        const fs = await import("fs/promises");
+        await fs.writeFile(filepath, base64Data, 'base64');
+        
+        responseImage = `/heatmaps/${filename}`;
+      } catch (err: any) {
+        jlog({
+          ts: new Date().toISOString(),
+          level: "error",
+          requestId,
+          route,
+          phase: "file_save_failed",
+          errorMessage: err?.message,
+        });
+        // Fall back to base64
+        responseImage = finalImage;
+      }
+    }
+
     // Generate debug heat layer if requested
     let heatLayerGray: string | undefined;
     if (debugHeat) {
@@ -224,7 +328,9 @@ export async function postHeatmapData(req: Request, res: Response) {
       timings: {
         map: mapDurationMs,
         accumulate: accumulateDurationMs,
-        blur: blurDurationMs
+        blur: blurDurationMs,
+        colorize: colorizeDurationMs,
+        composite: compositeDurationMs
       },
       width,
       height,
@@ -240,7 +346,7 @@ export async function postHeatmapData(req: Request, res: Response) {
     }));
 
     return res.status(200).json({
-      image: screenshotResult.image,
+      image: responseImage,
       heat: {
         width,
         height,
@@ -257,7 +363,12 @@ export async function postHeatmapData(req: Request, res: Response) {
         radiusPx,
         intensityPerPoint,
         blurPx,
-        phase: "phase5.step2"
+        alpha,
+        blendMode,
+        ramp,
+        clipLowPercent,
+        clipHighPercent,
+        phase: "phase5.step3"
       }
     });
 

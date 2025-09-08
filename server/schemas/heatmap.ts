@@ -35,9 +35,15 @@ export const heatmapDataRequestSchema = baseHeatmapSchema.extend({
     )
     .min(1, "At least one dataPoint is required")
     .max(5000, "Too many dataPoints"),
+ // Step-2 knobs
  alpha: z.number().optional(),
  radiusPx: z.number().optional(),
  blurPx: z.number().optional(),
+ // Step-3 knobs
+ blendMode: z.enum(["lighter", "source-over"]).optional().default("lighter"),
+ ramp: z.enum(["classic", "soft"]).optional().default("classic"),
+ clipLowPercent: z.number().optional().default(0),
+ clipHighPercent: z.number().optional().default(100),
 });
 
 // Inferred TypeScript types (optional but recommended)

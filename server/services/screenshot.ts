@@ -1,30 +1,16 @@
 // FILE: server/services/screenshot.ts
-import chromium from "@sparticuz/chromium";
-import puppeteer from "puppeteer-core";
+import { getExternalScreenshotBase64 } from "./screenshotExternal";
 
 type Device = "desktop" | "tablet" | "mobile";
 
-const VIEWPORTS: Record<
-  Device,
-  {
-    width: number;
-    height: number;
-    deviceScaleFactor?: number;
-    isMobile?: boolean;
-  }
-> = {
-  desktop: { width: 1440, height: 900, deviceScaleFactor: 1 },
-  tablet: { width: 1024, height: 768, deviceScaleFactor: 1, isMobile: true },
-  mobile: { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true }, // iPhone-ish
+const VIEWPORTS: Record<Device, { width: number; height: number }> = {
+  desktop: { width: 1920, height: 1080 },
+  tablet:  { width: 1024, height: 768 },
+  mobile:  { width: 414,  height: 896 },
 };
 
 export class ScreenshotError extends Error {
-  code:
-    | "LAUNCH_FAILED"
-    | "NAVIGATION_TIMEOUT"
-    | "NAVIGATION_FAILED"
-    | "SCREENSHOT_FAILED"
-    | "UNKNOWN";
+  code: "PROVIDER_FAILED" | "UNKNOWN";
   constructor(code: ScreenshotError["code"], message: string) {
     super(message);
     this.code = code;
@@ -32,76 +18,27 @@ export class ScreenshotError extends Error {
 }
 
 export async function getScreenshotBuffer(
-  url: string, 
+  url: string,
   device: Device
 ): Promise<{ png: Buffer; viewport: { width: number; height: number } }> {
   const viewport = VIEWPORTS[device] ?? VIEWPORTS.desktop;
-  
-  let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
 
   try {
-    const executablePath = await chromium.executablePath();
+    const { image /* data URI */, provider } =
+      await getExternalScreenshotBase64(url, device);
 
-    browser = await puppeteer.launch({
-      executablePath,
-      headless: chromium.headless,
-      args: chromium.args,
-      defaultViewport: chromium.defaultViewport,
-    });
-  } catch (e: any) {
-    throw new ScreenshotError(
-      "LAUNCH_FAILED",
-      `Chromium failed to launch: ${e?.message ?? e}`,
-    );
-  }
+    const b64 = image.replace(/^data:image\/png;base64,/, "");
+    const png = Buffer.from(b64, "base64");
 
-  try {
-    const page = await browser.newPage();
-    await page.setViewport(viewport);
-
-    try {
-      await page.goto(url, { waitUntil: "networkidle2", timeout: 30_000 });
-    } catch (e: any) {
-      if (String(e?.name).includes("TimeoutError")) {
-        throw new ScreenshotError(
-          "NAVIGATION_TIMEOUT",
-          `Navigation timed out after 30s for ${url}`,
-        );
-      }
-      throw new ScreenshotError(
-        "NAVIGATION_FAILED",
-        `Failed to navigate to ${url}: ${e?.message ?? e}`,
-      );
+    // Tiny sanity check
+    if (!png || png.length < 1000) {
+      throw new ScreenshotError("PROVIDER_FAILED", `Empty/invalid PNG from provider: ${provider}`);
     }
 
-    await page.waitForTimeout(500);
-
-    let buf: Buffer;
-    try {
-      buf = (await page.screenshot({ type: "png", fullPage: false })) as Buffer;
-    } catch (e: any) {
-      throw new ScreenshotError(
-        "SCREENSHOT_FAILED",
-        `Failed to capture screenshot: ${e?.message ?? e}`,
-      );
-    }
-
-    return { 
-      png: buf, 
-      viewport: { width: viewport.width, height: viewport.height } 
-    };
+    return { png, viewport };
   } catch (e: any) {
     if (e instanceof ScreenshotError) throw e;
-    throw new ScreenshotError(
-      "UNKNOWN",
-      `Unexpected error: ${e?.message ?? e}`,
-    );
-  } finally {
-    if (browser) {
-      try {
-        await browser.close();
-      } catch {}
-    }
+    throw new ScreenshotError("UNKNOWN", String(e?.message ?? e));
   }
 }
 
@@ -110,70 +47,12 @@ export async function screenshotToBase64(opts: {
   device?: Device;
   fullPage?: boolean;
 }): Promise<string> {
-  const { url, device = "desktop", fullPage = false } = opts;
-  const viewport = VIEWPORTS[device] ?? VIEWPORTS.desktop;
-
-  let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
+  const { url, device = "desktop" } = opts;
 
   try {
-    const executablePath = await chromium.executablePath();
-
-    browser = await puppeteer.launch({
-      executablePath,
-      headless: chromium.headless, // true on Replit/serverless
-      args: chromium.args, // hardened defaults
-      defaultViewport: chromium.defaultViewport, // safe baseline
-    });
+    const { image } = await getExternalScreenshotBase64(url, device);
+    return image;
   } catch (e: any) {
-    throw new ScreenshotError(
-      "LAUNCH_FAILED",
-      `Chromium failed to launch: ${e?.message ?? e}`,
-    );
-  }
-
-  try {
-    const page = await browser.newPage();
-    await page.setViewport(viewport);
-
-    try {
-      await page.goto(url, { waitUntil: "networkidle2", timeout: 30_000 });
-    } catch (e: any) {
-      if (String(e?.name).includes("TimeoutError")) {
-        throw new ScreenshotError(
-          "NAVIGATION_TIMEOUT",
-          `Navigation timed out after 30s for ${url}`,
-        );
-      }
-      throw new ScreenshotError(
-        "NAVIGATION_FAILED",
-        `Failed to navigate to ${url}: ${e?.message ?? e}`,
-      );
-    }
-
-    await page.waitForTimeout(500); // small settle for dynamic pages
-
-    let buf: Buffer;
-    try {
-      buf = (await page.screenshot({ type: "png", fullPage })) as Buffer;
-    } catch (e: any) {
-      throw new ScreenshotError(
-        "SCREENSHOT_FAILED",
-        `Failed to capture screenshot: ${e?.message ?? e}`,
-      );
-    }
-
-    return `data:image/png;base64,${buf.toString("base64")}`;
-  } catch (e: any) {
-    if (e instanceof ScreenshotError) throw e;
-    throw new ScreenshotError(
-      "UNKNOWN",
-      `Unexpected error: ${e?.message ?? e}`,
-    );
-  } finally {
-    if (browser) {
-      try {
-        await browser.close();
-      } catch {}
-    }
+    throw new ScreenshotError("PROVIDER_FAILED", `Failed to get screenshot: ${e?.message ?? e}`);
   }
 }

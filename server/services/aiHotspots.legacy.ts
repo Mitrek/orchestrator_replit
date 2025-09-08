@@ -1,4 +1,3 @@
-
 import { createHash } from "crypto";
 import { spawn } from "child_process";
 import { readFileSync } from "fs";
@@ -26,14 +25,14 @@ export async function getAiHotspotsLegacy({
 }> {
   const scriptPath = join(process.cwd(), "attached_assets/ai-engines/legacy/heatmap_v1.js");
   const checksumPath = join(process.cwd(), "attached_assets/ai-engines/legacy/heatmap_v1.sha256");
-  
+
   // Verify checksum
   let checksumOk = false;
   try {
     const scriptContent = readFileSync(scriptPath, "utf8");
     const expectedChecksum = readFileSync(checksumPath, "utf8").trim();
     const actualChecksum = createHash("sha256").update(scriptContent).digest("hex");
-    
+
     if (actualChecksum !== expectedChecksum) {
       throw new Error("Legacy engine checksum mismatch (refuse to run)");
     }
@@ -49,13 +48,13 @@ export async function getAiHotspotsLegacy({
   try {
     // Spawn the legacy script
     const hotspots = await runLegacyScript(scriptPath, url, device);
-    
+
     if (!hotspots || hotspots.length === 0) {
       // Return fallback if script can't emit JSON yet
       const fallbackHotspots = getFallbackHotspots();
       const { kept } = clampAndValidateHotspots(fallbackHotspots);
       const processed = greedyDeoverlap(kept, { max: 8, iouThreshold: 0.4 });
-      
+
       return {
         hotspots: processed,
         meta: {
@@ -70,15 +69,15 @@ export async function getAiHotspotsLegacy({
 
     const requested = hotspots.length;
     const { kept } = clampAndValidateHotspots(hotspots);
-    
+
     // Apply parity rules
     let filtered = kept;
     if (parity) {
       filtered = kept.filter(h => h.confidence >= 0.25);
     }
-    
+
     const processed = greedyDeoverlap(filtered, { max: 8, iouThreshold: 0.4 });
-    
+
     return {
       hotspots: processed,
       meta: {
@@ -90,22 +89,25 @@ export async function getAiHotspotsLegacy({
       }
     };
 
-  } catch (error) {
-    console.error("Legacy script error:", error);
-    
-    // Return fallback
-    const fallbackHotspots = getFallbackHotspots();
-    const { kept } = clampAndValidateHotspots(fallbackHotspots);
-    const processed = greedyDeoverlap(kept, { max: 8, iouThreshold: 0.4 });
-    
+  } catch (error: any) {
+    console.error("[getAiHotspotsLegacy] error:", error);
+
+    // Fallback instead of throwing to prevent 500s
+    const fallbackHotspots = [
+      { x: 0.1, y: 0.1, width: 0.3, height: 0.1, confidence: 0.8, element_type: "headline" as const, reason: "Fallback headline area" },
+      { x: 0.7, y: 0.2, width: 0.2, height: 0.08, confidence: 0.7, element_type: "cta" as const, reason: "Fallback CTA area" },
+      { x: 0.1, y: 0.8, width: 0.15, height: 0.05, confidence: 0.6, element_type: "logo" as const, reason: "Fallback logo area" }
+    ];
+
     return {
-      hotspots: processed,
+      hotspots: fallbackHotspots,
       meta: {
-        engine: "legacy",
-        checksumOk,
-        requested: fallbackHotspots.length,
-        accepted: processed.length,
-        pruned: fallbackHotspots.length - processed.length
+        engine: "legacy" as const,
+        checksumOk: false,
+        requested: 3,
+        accepted: 3,
+        pruned: 0,
+        fallback: true
       }
     };
   }
@@ -139,7 +141,7 @@ function runLegacyScript(scriptPath: string, url: string, device: string): Promi
         // Try to parse JSON from stdout
         const lines = stdout.split("\n");
         let jsonLine = "";
-        
+
         for (const line of lines) {
           const trimmed = line.trim();
           if (trimmed.startsWith("[") || trimmed.startsWith("{")) {

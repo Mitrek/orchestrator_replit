@@ -1,0 +1,113 @@
+Thanks for the screenshot + zip. I unpacked **Cimple(1).zip** and read the changes. Here’s the diagnosis tied to the exact files you have now.
+
+# What went wrong (and why your smoketest failed)
+
+## 1) `debug.heatLayerGray` is missing → your test sees an empty string
+
+* In `server/controllers/heatmap.data.ts`, the response only includes the debug image if it’s successfully generated:
+
+  ```ts
+  debug: heatLayerGray ? { heatLayerGray } : {}
+  ```
+
+  If generation throws, it logs `phase: "debug_heat_failed"` and **omits** it—so `$r1.debug.heatLayerGray` ends up empty in PowerShell and your `Save-DataUrlImage` fails.
+
+* Why did generation likely fail?
+
+  * The screenshot provider is **full-page** (see `server/services/screenshotExternal.ts` – thum.io uses `width x full`). For pages like `example.com`, that can mean very tall images.
+  * The debug renderer builds a canvas **with the same width/height as the screenshot** (`heatBufferToGreyscalePngBase64` in `server/services/imaging.ts`). For long pages this is a very large canvas → memory-heavy on Replit, which often crashes during `createCanvas(...)` or `toBuffer(...)`.
+  * Your accumulator itself is fine (see below), but the **debug image** step is where the memory wall hits.
+
+**Evidence in your code:**
+
+* `heatBufferToGreyscalePngBase64(...)` allocates a full-size canvas and imageData.
+* Controller wraps this in a `try/catch` and quietly skips the debug image when it fails.
+
+**Fix direction:** downscale debug output (details in “What to do next” below).
+
+---
+
+## 2) Test 3 expectation is inconsistent with how you compute metrics
+
+* In your controller, `nonZeroCount` is computed in `accumulateHeat` **before blur**:
+
+  ```ts
+  const acc = accumulateHeat(...); // returns { buffer, maxValue, nonZeroCount }
+  const blur = blurHeatBuffer(acc.buffer, ...); // replaces buffer + maxValue (not nonZeroCount)
+  // you return acc.nonZeroCount (pre-blur), but maxValue may be post-blur
+  ```
+
+* Your smoketest compares:
+
+  * **Test 2:** single point, `blurPx = 0`
+  * **Test 3:** multiple points, `blurPx = 24`
+
+  Because `nonZeroCount` is **pre-blur** in both cases, that part is fine. But your **maxValue** in test 3 comes **after** blur (lower peak because smoothing), and your assertion says `>=` vs test 2 (no blur). That can fail even if everything is working.
+
+* Also, if a previous call returned a taller full-page screenshot and a later call returned a different height (full-page varies by page state/provider), absolute counts can look odd unless you normalize by image area.
+
+**Fix direction:** keep blur the same across the tests you compare, or add a separate `nonZeroCountBlurred` and compare apples-to-apples.
+
+---
+
+# What to do next (precise, small changes)
+
+## A) Make debug heat image reliable (downscale)
+
+Ask the Replit assistant to implement **safe downscaling** in `heatBufferToGreyscalePngBase64` (or a wrapper) so debug images never allocate a huge canvas:
+
+* Add constants:
+
+  * `MAX_DEBUG_MEGA_PIXELS = 3` (≈ 3,000,000 pixels)
+* Compute:
+
+  * `const pixels = width * height`
+  * If `pixels > MAX_DEBUG_MEGA_PIXELS`, compute a scale `s = Math.sqrt(MAX_DEBUG_MEGA_PIXELS / pixels)` (e.g., 0.3)
+  * Downsample the buffer to `W2 = Math.max(1, Math.floor(width * s))`, `H2 = Math.max(1, Math.floor(height * s))` using **average pooling** (simple box pooling is enough)
+  * Create the canvas at `(W2, H2)` and paint the greyscale there
+* Return the data URL as you already do.
+
+This keeps debug preview faithful but small enough to survive Replit’s memory limits.
+
+> Alternative/quick guard: if `width * height > 6e6` then **skip** debug output and include `debug: { skipped: "canvas_too_large" }`. (But since your test expects the image, I’d implement downscaling.)
+
+## B) Align the smoketest assertions
+
+* Keep blur **consistent** across the comparisons:
+
+  * Either run both Test 2 and Test 3 with `blurPx = 0`
+  * Or run both with `blurPx = 24`
+* Update the optional save step to **only** try saving when the field exists:
+
+  ```powershell
+  if ($r.debug -and $r.debug.heatLayerGray -and $r.debug.heatLayerGray.StartsWith("data:image/png;base64,")) {
+    Save-DataUrlImage ...
+  }
+  ```
+* If you want to compare “after-blur” counts, ask the assistant to also compute `nonZeroCountBlurred` (count how many entries in the blurred buffer are > 0) and include it in the response.
+
+---
+
+# TL;DR fixes you should request from Replit now
+
+1. **Downscaled debug heat layer**
+
+   * Implement downsampling before calling `createCanvas` in `heatBufferToGreyscalePngBase64` (or a new helper).
+   * Target ≤ 3 MP canvas for debug to avoid `debug_heat_failed`.
+
+2. **Optional metric**
+
+   * Add `nonZeroCountBlurred` to response (right after blur).
+
+3. **Smoketest tweaks**
+
+   * Use the same `blurPx` in Test 2 and Test 3.
+   * Only save `heatLayerGray` if present.
+
+Once those are in, rerun the smoketest—you should see:
+
+* `greyscale heat layer present` → PASS (downscaled image),
+* `nonZeroCount grew vs single-point case` → PASS (with comparable blur),
+* `maxValue` comparison either equal or sensible (don’t assert `>=` if you’re blurring one and not the other).
+
+If you want, I can send an updated smoketest snippet that handles the presence/absence of `heatLayerGray` gracefully and keeps blur consistent.

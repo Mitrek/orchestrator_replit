@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import type { Express } from "express";
 
 import crypto from "crypto";
-import bcrypt from "bcryptjs";
+import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import rateLimit from "express-rate-limit";
 import express from "express"; // Import express to use express.static
@@ -27,7 +27,6 @@ import { postHeatmapScreenshot } from "./controllers/heatmap.screenshot";
 import { postHeatmap } from "./controllers/heatmap";
 import { diagPuppeteerLaunch } from "./controllers/puppeteer.diagnostics";
 import { postHeatmapData } from "./controllers/heatmap.data";
-import { diagScreenshotProvider } from "./controllers/screenshot.provider.diagnostics";
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 
@@ -159,7 +158,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.json(result);
       } catch (error: any) {
         console.error('Heatmap generation error:', error);
-        return res.status(500).json({ error: "Failed to generate heatmap", details: error?.message });
+        return res.status(500).json({ error: "Failed to generate heatmap" });
       }
     }
   );
@@ -187,7 +186,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.json(result);
       } catch (error: any) {
         console.error('Data heatmap generation error:', error);
-        return res.status(500).json({ error: "Failed to generate heatmap", details: error?.message });
+        return res.status(500).json({ error: "Failed to generate heatmap" });
       }
     }
   );
@@ -198,9 +197,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Puppeteer diagnostics
   app.get("/api/v1/puppeteer/launch", diagPuppeteerLaunch);
-
-  // Screenshot provider diagnostics
-  app.get("/api/v1/screenshot/provider", diagScreenshotProvider);
 
   // ------------------------- Subscription Checker ----------------------------
   app.get(

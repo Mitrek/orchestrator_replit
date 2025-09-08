@@ -1,0 +1,124 @@
+**Implementation Plan — Phase 6 (start from Phase-5 baseline, provider-only screenshots, no Chromium)**
+
+### 1) Contract (for both endpoints)
+
+* Response (exact):
+
+```json
+{
+  "base64": "data:image/png;base64,...",
+  "meta": {
+    "sourceUrl": "<string>",
+    "device": "desktop|tablet|mobile",
+    "viewport": { "width": 0, "height": 0 },
+    "engine": "ai|data",
+    "durationMs": 0,
+    "timestamp": "<ISO8601>",
+    "phase": "phase6"
+  }
+}
+```
+
+* Always base64. No URL/file mode. No `returnMode`.
+
+---
+
+### 2) `server/services/heatmap.ts`
+
+* Use **provider screenshot only** (Phase-5 function):
+
+  * Replace any import of `./screenshot` (Chromium) with the Phase-5 provider:
+
+    ```ts
+    import { getExternalScreenshotBase64 } from "./screenshotExternal";
+    ```
+  * Obtain screenshot:
+
+    ```ts
+    const { image: screenshotBase64 } = await getExternalScreenshotBase64(url, device);
+    ```
+* Canvas imports:
+
+  ```ts
+  import { createCanvas, Image } from "@napi-rs/canvas";
+  ```
+* Device map:
+
+  ```ts
+  type Device = "desktop"|"tablet"|"mobile";
+  const VIEWPORTS = {
+    desktop: { width:1920, height:1080 },
+    tablet:  { width:1024, height:768  },
+    mobile:  { width:414,  height:896  }
+  } as const;
+  ```
+* Helpers:
+
+  * `sanitizeDevice(d?:Device):Device` → default `"desktop"`.
+  * `validateUrl(url:string)` → throw on invalid.
+* Exports:
+
+  * `generateDataHeatmap({ url, device, dataPoints })`
+
+    * Validate `dataPoints` non-empty, clamp 0..1, render via Phase-5 pipeline.
+    * `engine: "data"`.
+  * `generateHeatmap({ url, device })`
+
+    * Deterministic hotspots (stub), render via same pipeline.
+    * `engine: "ai"`.
+* Both:
+
+  * Measure `durationMs`, set `meta.phase = "phase6"`.
+  * On provider failure, throw with prefix `SCREENSHOT_PROVIDER_FAILED: ...`.
+  * No filesystem writes; return base64 only.
+
+---
+
+### 3) `server/services/imaging.ts`
+
+* Ensure `overlayHeatmapOnBase64Png()`:
+
+  * Accepts data-URL screenshot, returns data-URL PNG.
+  * No disk I/O.
+* Keep `overlayRectangleOnBase64Png()` untouched.
+
+---
+
+### 4) `server/routes.ts`
+
+* `POST /api/v1/heatmap`
+
+  * Body: `{ url:string, device?: "desktop"|"tablet"|"mobile" }`.
+  * 400 if `url` missing/invalid.
+  * Call `generateHeatmap({ url, device })`.
+  * `catch`:
+
+    ```ts
+    console.error("[/api/v1/heatmap] error:", error?.stack || error);
+    return res.status(500).json({ error:"Failed to generate heatmap", details: error?.message });
+    ```
+* `POST /api/v1/heatmap/data`
+
+  * Body: `{ url:string, device?:..., dataPoints: Array<{x:number,y:number,type?:string}> }`.
+  * 400 if `url` invalid or `dataPoints` missing/empty.
+  * Call `generateDataHeatmap({ url, device, dataPoints })`.
+  * Same `catch` as above.
+* Do not read/accept `returnMode`.
+* Ensure these routes **do not** import or transitively call Chromium code.
+
+---
+
+### 5) Dependencies
+
+* Do not add `puppeteer`, `puppeteer-core`, or `@sparticuz/chromium`.
+* Use `@napi-rs/canvas` only (no `canvas`).
+
+---
+
+### 6) Acceptance Criteria
+
+* Both endpoints return the **exact** envelope with `base64` and `meta.phase = "phase6"`.
+* Provider-only screenshot path used (no Chromium calls).
+  *Project-wide search for `puppeteer|chromium|launch\(|newPage\(|page\.screenshot\(` returns none in heatmap paths.*
+* `/api/v1/heatmap/data` renders visible heat overlay from normalized points.
+* Errors: `400` on bad input; `500` with `{ error, details }` (provider failures prefixed with `SCREENSHOT_PROVIDER_FAILED:`).

@@ -1,0 +1,74 @@
+Update the project to remove Puppeteer/Chromium entirely from the screenshot flow and rely only on an external provider (Thum.io).
+
+### Tasks
+
+1. **Replace screenshot service**
+
+   * Overwrite `server/services/screenshot.ts` with a provider-only implementation:
+
+     * Use `fetch` to call Thum.io (`https://image.thum.io/get/png/width/<width>/<url>`).
+     * Choose width based on device: desktop (1920), tablet (1024), mobile (414).
+     * Always return `data:image/png;base64,...`.
+     * Throw `SCREENSHOT_PROVIDER_FAILED: ...` if fetch fails.
+
+2. **Fix heatmap.ts imports**
+
+   * Ensure `server/services/heatmap.ts` imports:
+
+     ```ts
+     import { createCanvas, Image } from "@napi-rs/canvas";
+     ```
+   * Remove any leftover Puppeteer references (should not import screenshot via Puppeteer).
+
+3. **Add provider diagnostics**
+
+   * Create `server/controllers/screenshot.provider.diagnostics.ts`:
+
+     ```ts
+     import type { Request, Response } from "express";
+     import { screenshotToBase64 } from "../services/screenshot";
+
+     export async function diagScreenshotProvider(req: Request, res: Response) {
+       try {
+         const url = (req.query.url as string) || "https://example.com";
+         const device = (req.query.device as any) || "desktop";
+         const image = await screenshotToBase64({ url, device });
+         res.json({
+           ok: true,
+           provider: "thum.io",
+           url,
+           device,
+           samplePrefix: image.substring(0, 32),
+           length: image.length
+         });
+       } catch (err: any) {
+         res.status(500).json({ ok: false, provider: "thum.io", error: err?.message });
+       }
+     }
+     ```
+   * Register in `server/routes.ts`:
+
+     ```ts
+     import { diagScreenshotProvider } from "./controllers/screenshot.provider.diagnostics";
+     app.get("/api/v1/screenshot/provider", diagScreenshotProvider);
+     ```
+
+4. **Improve error reporting**
+
+   * In both heatmap routes’ catch blocks (`/api/v1/heatmap`, `/api/v1/heatmap/data`), log the full error stack and return:
+
+     ```ts
+     res.status(500).json({ error: "Failed to generate heatmap", details: error?.message });
+     ```
+
+5. **Clean dependencies**
+
+   * Remove `puppeteer` from `package.json` dependencies.
+   * Keep `@napi-rs/canvas` and `bcryptjs`.
+
+### Acceptance
+
+* `/api/v1/screenshot/provider` returns `{ ok: true, provider: "thum.io", ... }` with a base64 prefix.
+* `/api/v1/heatmap` and `/api/v1/heatmap/data` return `base64` images without trying to launch Chromium.
+* Errors from the provider show as `SCREENSHOT_PROVIDER_FAILED` in `details`.
+* No Puppeteer/Chromium code remains in the screenshot pipeline.

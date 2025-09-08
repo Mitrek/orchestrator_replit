@@ -201,6 +201,103 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ image: makeDummyPngBase64() });
   });
 
+  // Hotspots JSON API
+  app.post("/api/v1/heatmap/hotspots", async (req, res) => {
+    const startTime = Date.now();
+
+    try {
+      const { url, device = "desktop", engine, parity = true } = req.body;
+
+      // Import validation helpers
+      const { ALLOWED_DEVICES, DEVICE_MAP } = await import("./services/validation");
+
+      // Validate URL
+      if (!url || typeof url !== "string") {
+        return res.status(400).json({ error: "URL is required" });
+      }
+
+      // Validate device
+      if (!ALLOWED_DEVICES.includes(device as any)) {
+        return res.status(400).json({ 
+          error: "Invalid device", 
+          allowed: ALLOWED_DEVICES 
+        });
+      }
+
+      // Determine engine
+      const selectedEngine = engine || process.env.AI_ENGINE || "phase7";
+
+      let result;
+      if (selectedEngine === "legacy") {
+        const { getAiHotspotsLegacy } = await import("./services/aiHotspots.legacy");
+        result = await getAiHotspotsLegacy({ url, device, parity });
+      } else {
+        const { getAiHotspotsPhase7 } = await import("./services/aiHotspots");
+        result = await getAiHotspotsPhase7({ url, device, parity });
+      }
+
+      // Re-sanitize (belt & suspenders)
+      const { clampAndValidateHotspots, greedyDeoverlap } = await import("./services/validation");
+      const { kept } = clampAndValidateHotspots(result.hotspots);
+      let filtered = kept;
+      if (parity) {
+        filtered = kept.filter(h => h.confidence >= 0.25);
+      }
+      const finalHotspots = greedyDeoverlap(filtered, { max: 8, iouThreshold: 0.4 });
+
+      const durationMs = Date.now() - startTime;
+      const viewport = DEVICE_MAP[device];
+
+      // Log structured line
+      console.log(JSON.stringify({
+        route: "/api/v1/heatmap/hotspots",
+        url,
+        device,
+        engine: selectedEngine,
+        parity,
+        durationMs,
+        accepted: finalHotspots.length,
+        pruned: result.hotspots.length - finalHotspots.length,
+        fallback: result.meta.fallback || false
+      }));
+
+      res.json({
+        hotspots: finalHotspots,
+        meta: {
+          phase: "phase7",
+          engine: "ai",
+          device,
+          viewport,
+          ai: {
+            engine: result.meta.engine,
+            model: result.meta.engine === "legacy" ? "legacy" : result.meta.model,
+            fallback: result.meta.fallback || false,
+            promptHash: result.meta.promptHash || undefined,
+            checksumOk: result.meta.checksumOk || undefined,
+            requested: result.meta.requested,
+            accepted: finalHotspots.length,
+            pruned: result.meta.requested - finalHotspots.length,
+            parity
+          },
+          timestamp: new Date().toISOString(),
+          durationMs
+        }
+      });
+
+    } catch (error: any) {
+      console.error("[/api/v1/heatmap/hotspots] error:", error);
+      
+      if (error.message?.includes("checksum mismatch")) {
+        return res.status(500).json({ error: error.message });
+      }
+
+      return res.status(500).json({ 
+        error: "Failed to generate hotspots", 
+        details: error?.message 
+      });
+    }
+  });
+
   // Puppeteer diagnostics
   app.get("/api/v1/puppeteer/launch", diagPuppeteerLaunch);
 

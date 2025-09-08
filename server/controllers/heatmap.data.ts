@@ -1,4 +1,3 @@
-
 import type { Request, Response } from "express";
 import { nanoid } from "nanoid";
 import { performance } from "node:perf_hooks";
@@ -30,13 +29,13 @@ export async function postHeatmapData(req: Request, res: Response) {
     // Validate input
     const parsed = heatmapDataRequestSchema.parse(req.body);
     const { url, device = "desktop", returnMode = "base64", dataPoints } = parsed;
-    
+
     // Extract optional knobs from request body
     const radiusPx = req.body.radiusPx ?? 40;
     const intensityPerPoint = req.body.intensityPerPoint ?? 1.0;
     const blurPx = req.body.blurPx ?? 24;
     const debugHeat = req.body.debugHeat ?? false;
-    
+
     // Step 3 knobs for colorization and compositing
     const alpha = Math.max(0, Math.min(1, req.body.alpha ?? 0.60));
     const blendMode = req.body.blendMode ?? "lighter";
@@ -74,7 +73,7 @@ export async function postHeatmapData(req: Request, res: Response) {
       });
     } catch (err: any) {
       const durationMs = Math.round(performance.now() - t0);
-      
+
       jlog({
         ts: new Date().toISOString(),
         level: "error",
@@ -178,7 +177,7 @@ export async function postHeatmapData(req: Request, res: Response) {
         const blurResult = blurHeatBuffer(heatResult.buffer, width, height, { blurPx });
         heatResult.buffer = blurResult.buffer;
         heatResult.maxValue = blurResult.maxValue;
-        
+
         // Count non-zero pixels after blur
         nonZeroCountBlurred = 0;
         for (let i = 0; i < heatResult.buffer.length; i++) {
@@ -233,7 +232,7 @@ export async function postHeatmapData(req: Request, res: Response) {
         clipLowPercent,
         clipHighPercent
       });
-      
+
       jlog({
         ts: new Date().toISOString(),
         level: "info",
@@ -271,15 +270,15 @@ export async function postHeatmapData(req: Request, res: Response) {
         // Ensure public/heatmaps directory exists
         const heatmapDir = path.join(process.cwd(), "public", "heatmaps");
         await fs.mkdir(heatmapDir, { recursive: true });
-        
+
         // Generate filename
         const timestamp = Date.now();
         const shortId = generateId(8);
         const filename = `heatmap-${timestamp}-${shortId}.png`;
         const filepath = path.join(heatmapDir, filename);
-        
+
         // Composite and save
-        const compositedBase64 = compositeHeatOverScreenshot({
+        const compositedBase64 = await compositeHeatOverScreenshot({
           screenshotPngBase64: screenshotResult.image,
           heatRgba,
           width,
@@ -287,15 +286,15 @@ export async function postHeatmapData(req: Request, res: Response) {
           alpha,
           blendMode
         });
-        
+
         // Extract base64 data and save to file
         const base64Data = compositedBase64.replace(/^data:image\/png;base64,/, "");
         await fs.writeFile(filepath, Buffer.from(base64Data, "base64"));
-        
+
         finalImage = `/heatmaps/${filename}`;
       } else {
         // Return base64 directly
-        finalImage = compositeHeatOverScreenshot({
+        finalImage = await compositeHeatOverScreenshot({
           screenshotPngBase64: screenshotResult.image,
           heatRgba,
           width,
@@ -304,7 +303,7 @@ export async function postHeatmapData(req: Request, res: Response) {
           blendMode
         });
       }
-      
+
       jlog({
         ts: new Date().toISOString(),
         level: "info",
@@ -399,7 +398,7 @@ export async function postHeatmapData(req: Request, res: Response) {
         path: i.path?.join(".") || "",
         message: i.message,
       }));
-      
+
       jlog({
         ts: new Date().toISOString(),
         level: "warn",
@@ -411,7 +410,7 @@ export async function postHeatmapData(req: Request, res: Response) {
         errorCode: "VALIDATION_ERROR",
         validationErrors: details,
       });
-      
+
       return res.status(400).json({
         error: "Bad Request",
         code: "VALIDATION_ERROR",
@@ -431,7 +430,7 @@ export async function postHeatmapData(req: Request, res: Response) {
       errorCode: "HEATMAP_DATA_FAILED",
       errorMessage: String(err?.message ?? err),
     });
-    
+
     return res.status(500).json({
       error: "Failed to generate data heatmap",
       code: "HEATMAP_DATA_FAILED", 

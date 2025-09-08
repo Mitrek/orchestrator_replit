@@ -434,7 +434,7 @@ export function heatBufferToColorRgba(
 /**
  * Composite heat layer over screenshot
  */
-export function compositeHeatOverScreenshot(options: {
+export async function compositeHeatOverScreenshot(options: {
   screenshotPngBase64: string;
   heatRgba: Uint8ClampedArray;
   width: number;

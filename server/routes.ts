@@ -329,10 +329,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Serve the dist folder for client routes
-  app.use(express.static(path.join(__dirname, "..", "dist")));
+  app.use(express.static(path.join(import.meta.dirname, "..", "dist")));
 
   // Serve heatmap static files
-  app.use("/heatmaps", express.static(path.join(__dirname, "..", "public", "heatmaps")));
+  app.use("/heatmaps", express.static(path.join(import.meta.dirname, "..", "public", "heatmaps")));
 
   const httpServer = createServer(app);
   return httpServer;

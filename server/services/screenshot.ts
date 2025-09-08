@@ -1,12 +1,12 @@
-// FILE: server/services/screenshot.ts
-import puppeteer from "puppeteer";
+
+import fetch from "node-fetch";
 
 type Device = "desktop" | "tablet" | "mobile";
 
-const VIEWPORTS: Record<Device, { width: number; height: number }> = {
-  desktop: { width: 1920, height: 1080 },
-  tablet:  { width: 1024, height: 768  },
-  mobile:  { width: 414,  height: 896  },
+const DEVICE_WIDTHS: Record<Device, number> = {
+  desktop: 1920,
+  tablet: 1024,
+  mobile: 414,
 };
 
 export async function screenshotToBase64(opts: {
@@ -14,38 +14,26 @@ export async function screenshotToBase64(opts: {
   device?: Device;
   fullPage?: boolean;
 }): Promise<string> {
-  const device = (opts.device ?? "desktop") as Device;
-  const vp = VIEWPORTS[device];
-
-  const browser = await puppeteer.launch({
-    headless: "new",
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--disable-extensions",
-      "--disable-web-security",
-      "--no-first-run",
-      "--no-default-browser-check",
-      "--disable-background-timer-throttling",
-      "--disable-renderer-backgrounding",
-      "--disable-backgrounding-occluded-windows",
-    ],
-  });
-
+  const device = opts.device || "desktop";
+  const width = DEVICE_WIDTHS[device];
+  
+  const thumUrl = `https://image.thum.io/get/png/width/${width}/${encodeURIComponent(opts.url)}`;
+  
   try {
-    const page = await browser.newPage();
-    await page.setViewport({ width: vp.width, height: vp.height, deviceScaleFactor: 1 });
-    await page.goto(opts.url, { waitUntil: "networkidle2", timeout: 30_000 });
-
-    const buf = (await page.screenshot({
-      type: "png",
-      fullPage: Boolean(opts.fullPage),
-    })) as Buffer;
-
-    return `data:image/png;base64,${buf.toString("base64")}`;
-  } finally {
-    await browser.close();
+    const response = await fetch(thumUrl, {
+      timeout: 30000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; Screenshot Service)'
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    const buffer = await response.buffer();
+    return `data:image/png;base64,${buffer.toString('base64')}`;
+  } catch (error: any) {
+    throw new Error(`SCREENSHOT_PROVIDER_FAILED: ${error.message}`);
   }
 }

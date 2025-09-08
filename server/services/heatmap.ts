@@ -1,6 +1,6 @@
 
 // FILE: server/services/heatmap.ts
-import { createCanvas } from "@napi-rs/canvas";
+import { createCanvas, Image } from "@napi-rs/canvas";
 import { screenshotToBase64 } from "./screenshot";
 
 type Device = "desktop" | "tablet" | "mobile";

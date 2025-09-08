@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import type { Express } from "express";
 
 import crypto from "crypto";
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import rateLimit from "express-rate-limit";
 import express from "express"; // Import express to use express.static

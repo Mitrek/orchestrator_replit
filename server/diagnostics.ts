@@ -113,27 +113,27 @@ function isProviderConfigured(): boolean {
   return !!(process.env.THUM_IO_KEY || process.env.SCREENSHOT_MACHINE_KEY);
 }
 
-async function runGoldenQA(): Promise<Record<string, any>> {
+async function runGoldenQA(): Promise<Array<any>> {
   try {
     const { runGoldenQA: runQA } = await import("./qa");
     const results = await runQA();
     
-    // Convert array format to object format expected by diagnostics
-    const qaResults: Record<string, any> = {};
-    for (const result of results) {
-      qaResults[result.device] = {
-        psnr: result.psnr,
-        pass: result.pass,
-        reason: result.reason
-      };
-    }
-    
-    return qaResults;
+    // Return array format with all diagnostic fields
+    return results.map(result => ({
+      device: result.device,
+      goldenFound: result.goldenFound,
+      goldenSize: result.goldenSize,
+      renderSize: result.renderSize,
+      mse: result.mse,
+      psnr: result.psnr,
+      pass: result.pass,
+      reason: result.reason
+    }));
   } catch (error: any) {
-    return {
-      desktop: { psnr: 0, pass: false, reason: "qa_error" },
-      tablet: { psnr: 0, pass: false, reason: "qa_error" },
-      mobile: { psnr: 0, pass: false, reason: "qa_error" }
-    };
+    return [
+      { device: "desktop", goldenFound: false, pass: false, reason: "qa_error" },
+      { device: "tablet", goldenFound: false, pass: false, reason: "qa_error" },
+      { device: "mobile", goldenFound: false, pass: false, reason: "qa_error" }
+    ];
   }
 }

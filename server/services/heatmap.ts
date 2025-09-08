@@ -1,7 +1,6 @@
 
-// FILE: server/services/heatmap.ts
-import { createCanvas } from "@napi-rs/canvas";
-import { screenshotToBase64 } from "./screenshot";
+import { createCanvas, Image } from "@napi-rs/canvas";
+import { getExternalScreenshotBase64 } from "./screenshotExternal";
 
 type Device = "desktop" | "tablet" | "mobile";
 
@@ -27,6 +26,7 @@ interface HeatmapResponse {
     engine: "ai" | "data";
     durationMs: number;
     timestamp: string;
+    phase: "phase6";
   };
 }
 
@@ -35,7 +35,7 @@ const VIEWPORTS = {
   desktop: { width: 1920, height: 1080 },
   tablet: { width: 1024, height: 768 },
   mobile: { width: 414, height: 896 },
-};
+} as const;
 
 function validateUrl(url: string): void {
   if (!url || typeof url !== 'string') {
@@ -68,7 +68,7 @@ function sanitizeDataPoints(dataPoints: any[]): Array<{ x: number; y: number; ty
 }
 
 function generateAIHotspots(viewport: { width: number; height: number }): Array<{ x: number; y: number; intensity: number }> {
-  // AI-simulated hotspots - these would come from actual AI analysis
+  // AI-simulated hotspots - deterministic for consistency
   return [
     { x: viewport.width * 0.5, y: viewport.height * 0.2, intensity: 0.8 },
     { x: viewport.width * 0.3, y: viewport.height * 0.4, intensity: 0.6 },
@@ -110,7 +110,9 @@ function renderHeatmapToCanvas(
     gradient.addColorStop(1, 'rgba(255, 255, 0, 0)');
 
     heatmapCtx.fillStyle = gradient;
-    heatmapCtx.fillRect(0, 0, viewport.width, viewport.height);
+    heatmapCtx.beginPath();
+    heatmapCtx.arc(spot.x, spot.y, 50 * spot.intensity, 0, 2 * Math.PI);
+    heatmapCtx.fill();
   });
 
   // Composite heatmap on screenshot with blend mode
@@ -156,7 +158,9 @@ function renderDataHeatmapToCanvas(
     gradient.addColorStop(1, 'rgba(255, 255, 0, 0)');
 
     heatmapCtx.fillStyle = gradient;
-    heatmapCtx.fillRect(0, 0, viewport.width, viewport.height);
+    heatmapCtx.beginPath();
+    heatmapCtx.arc(x, y, radius, 0, 2 * Math.PI);
+    heatmapCtx.fill();
   });
 
   // Composite heatmap on screenshot
@@ -183,12 +187,8 @@ export async function generateHeatmap(params: HeatmapArgs): Promise<HeatmapRespo
       sourceUrl: params.url
     }));
 
-    // Get screenshot
-    const screenshotBase64 = await screenshotToBase64({
-      url: params.url,
-      device,
-      fullPage: false
-    });
+    // Get screenshot using provider-only method
+    const { image: screenshotBase64 } = await getExternalScreenshotBase64(params.url, device);
 
     // Generate AI hotspots
     const hotspots = generateAIHotspots(viewport);
@@ -215,16 +215,21 @@ export async function generateHeatmap(params: HeatmapArgs): Promise<HeatmapRespo
         viewport,
         engine: 'ai',
         durationMs,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        phase: 'phase6'
       }
     };
   } catch (error: any) {
+    const errorMsg = error?.message?.includes('HTTP') ? 
+      `SCREENSHOT_PROVIDER_FAILED: ${error.message}` : 
+      error?.message || 'Unknown error';
+      
     console.log(JSON.stringify({
       endpoint: '/api/v1/heatmap',
-      error: error.message,
+      error: errorMsg,
       sourceUrl: params.url
     }));
-    throw error;
+    throw new Error(errorMsg);
   }
 }
 
@@ -245,12 +250,8 @@ export async function generateDataHeatmap(params: DataHeatmapArgs): Promise<Heat
       pointCount: dataPoints.length
     }));
 
-    // Get screenshot
-    const screenshotBase64 = await screenshotToBase64({
-      url: params.url,
-      device,
-      fullPage: false
-    });
+    // Get screenshot using provider-only method
+    const { image: screenshotBase64 } = await getExternalScreenshotBase64(params.url, device);
 
     // Render data heatmap
     const base64 = renderDataHeatmapToCanvas(screenshotBase64, dataPoints, viewport);
@@ -275,15 +276,20 @@ export async function generateDataHeatmap(params: DataHeatmapArgs): Promise<Heat
         viewport,
         engine: 'data',
         durationMs,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        phase: 'phase6'
       }
     };
   } catch (error: any) {
+    const errorMsg = error?.message?.includes('HTTP') ? 
+      `SCREENSHOT_PROVIDER_FAILED: ${error.message}` : 
+      error?.message || 'Unknown error';
+      
     console.log(JSON.stringify({
       endpoint: '/api/v1/heatmap/data',
-      error: error.message,
+      error: errorMsg,
       sourceUrl: params.url
     }));
-    throw error;
+    throw new Error(errorMsg);
   }
 }

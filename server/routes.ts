@@ -157,8 +157,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         return res.json(result);
       } catch (error: any) {
-        console.error('Heatmap generation error:', error);
-        return res.status(500).json({ error: "Failed to generate heatmap" });
+        console.error('[/api/v1/heatmap] error:', error?.stack || error);
+        return res.status(500).json({ 
+          error: "Failed to generate heatmap", 
+          details: error?.message 
+        });
       }
     }
   );
@@ -185,8 +188,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         return res.json(result);
       } catch (error: any) {
-        console.error('Data heatmap generation error:', error);
-        return res.status(500).json({ error: "Failed to generate heatmap" });
+        console.error('[/api/v1/heatmap/data] error:', error?.stack || error);
+        return res.status(500).json({ 
+          error: "Failed to generate heatmap", 
+          details: error?.message 
+        });
       }
     }
   );

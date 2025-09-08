@@ -24,7 +24,6 @@ export const heatmapRequestSchema = z.object({
  * Extends the base schema with dataPoints[].
  */
 export const heatmapDataRequestSchema = baseHeatmapSchema.extend({
- returnMode: z.enum(["base64", "url"]).optional().default("base64"),
  dataPoints: z
     .array(
       z.object({

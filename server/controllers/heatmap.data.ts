@@ -42,8 +42,7 @@ export async function postHeatmapData(req: Request, res: Response) {
       blendMode = "lighter",
       ramp = "classic",
       clipLowPercent = 0,
-      clipHighPercent = 100,
-      returnMode = "base64"
+      clipHighPercent = 100
     } = parsed;
     
     // Clamp alpha
@@ -269,34 +268,6 @@ export async function postHeatmapData(req: Request, res: Response) {
     }
     const compositeDurationMs = Math.round(performance.now() - tComposite);
 
-    // Handle URL mode by saving to file
-    let responseImage = finalImage;
-    if (returnMode === "url") {
-      try {
-        const timestamp = Date.now();
-        const shortId = nanoid(8);
-        const filename = `heatmap-${timestamp}-${shortId}.png`;
-        const filepath = `public/heatmaps/${filename}`;
-        
-        const base64Data = finalImage.replace(/^data:image\/png;base64,/, '');
-        const fs = await import("fs/promises");
-        await fs.writeFile(filepath, base64Data, 'base64');
-        
-        responseImage = `/heatmaps/${filename}`;
-      } catch (err: any) {
-        jlog({
-          ts: new Date().toISOString(),
-          level: "error",
-          requestId,
-          route,
-          phase: "file_save_failed",
-          errorMessage: err?.message,
-        });
-        // Fall back to base64
-        responseImage = finalImage;
-      }
-    }
-
     // Generate debug heat layer if requested
     let heatLayerGray: string | undefined;
     if (debugHeat) {
@@ -346,7 +317,7 @@ export async function postHeatmapData(req: Request, res: Response) {
     }));
 
     return res.status(200).json({
-      image: responseImage,
+      image: finalImage,
       heat: {
         width,
         height,

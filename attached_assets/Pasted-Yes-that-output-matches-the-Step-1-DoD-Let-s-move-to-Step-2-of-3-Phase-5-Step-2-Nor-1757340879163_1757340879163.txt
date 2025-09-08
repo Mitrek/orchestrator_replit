@@ -1,0 +1,119 @@
+Yes—that output matches the Step-1 DoD. Let’s move to **Step 2 of 3**.
+
+---
+
+# Phase 5 — Step 2: Normalized→Pixel mapping + Heat buffer (with optional blur), no color ramp yet
+
+**Goal:** Given normalized points (0..1), compute pixel coordinates against the actual screenshot dimensions, accumulate a heat/intensity buffer with a configurable radius, optionally blur it, and return diagnostics (and an optional greyscale preview of the heat layer alone). We are **not** compositing over the screenshot yet—this step proves geometry + accumulation.
+
+## Precise instructions for Replit AI assistant
+
+1. **Controller upgrade (no new routes)**
+
+* File: `server/controllers/heatmap.data.ts`
+* In `postHeatmapData`, after you obtain the screenshot (from Step 1), **stop returning early**.
+* Extract the PNG dimensions from the screenshot base64 (width/height). If you already decode the image to a buffer for size, reuse that.
+
+2. **Services: add a heat buffer module**
+
+* File: `server/services/imaging.ts` (or a new `heatbuffer.ts` if you prefer)
+* Add functions:
+
+  * `mapNormalizedPointsToPixels(points, width, height)` → returns `{ xPx, yPx }[]` (round to integers).
+  * `accumulateHeat(width, height, pixelPoints, { radiusPx = 40, intensityPerPoint = 1.0, cap = null })`
+
+    * Create a float32 array `width*height` initialized 0.
+    * For each point, add intensity to a **circular kernel** of radius `radiusPx`. A simple radial falloff is fine (e.g., linear or Gaussian).
+    * If `cap` provided, clamp each cell to `cap`.
+    * Return `{ buffer, width, height, maxValue, nonZeroCount }`.
+  * `blurHeatBuffer(buffer, width, height, { blurPx = 24 })` (optional in this step but recommended)
+
+    * Do a simple separable box or approx-Gaussian blur.
+    * Return `{ buffer, maxValue }` after blur.
+  * `heatBufferToGreyscalePngBase64(buffer, width, height)`
+
+    * Map 0..maxValue → 0..255 grayscale, **no color ramp**, full alpha 255 where >0.
+    * Return `data:image/png;base64,...`.
+
+3. **Controller logic (call the services)**
+
+* After screenshot retrieval:
+
+  * Read `device`, `dataPoints`, and accept optional knobs from body:
+
+    * `radiusPx?: number` (default `40`)
+    * `intensityPerPoint?: number` (default `1.0`)
+    * `blurPx?: number` (default `24`)
+    * `debugHeat?: boolean` (default `false`)
+  * Compute `width/height` from screenshot.
+  * `pixelPoints = mapNormalizedPointsToPixels(dataPoints, width, height)`
+  * `acc = accumulateHeat(width, height, pixelPoints, { radiusPx, intensityPerPoint })`
+  * If `blurPx > 0`, run `acc.buffer = blurHeatBuffer(acc.buffer, width, height, { blurPx }).buffer`
+  * If `debugHeat === true`, generate `heatLayerGray = heatBufferToGreyscalePngBase64(acc.buffer, width, height)`
+* **Response shape (Step-2 interim):**
+
+  ```json
+  {
+    "image": "data:image/png;base64,...screenshot only...", 
+    "heat": {
+      "width": <int>, "height": <int>,
+      "maxValue": <number>,
+      "nonZeroCount": <int>,
+      "sample": [ { "xNorm":0.5, "yNorm":0.5, "xPx":720, "yPx":450 } ]  // include first 1-5 mapped points
+    },
+    "debug": {
+      "heatLayerGray": "data:image/png;base64,..." // only if debugHeat=true
+    },
+    "meta": {
+      "sourceUrl": "<url>",
+      "device": "<desktop|tablet|mobile>",
+      "countPoints": <int>,
+      "radiusPx": <int>,
+      "intensityPerPoint": <number>,
+      "blurPx": <int>,
+      "phase": "phase5.step2"
+    }
+  }
+  ```
+* Errors:
+
+  * If mapping/accumulation fails → 500 with `{ error:"accumulation_failed", phase:"accumulate" }`.
+  * If blur fails → 500 with `{ error:"blur_failed", phase:"blur" }`.
+
+4. **Logging (structured)**
+
+* Log an entry with `{ route:"/api/v1/heatmap/data", device, points: dataPoints.length, width, height, radiusPx, blurPx, phase:"step2" }`.
+* Log timings for `map`, `accumulate`, `blur`.
+
+5. **Acceptance tests**
+
+* **Mapping sanity:**
+
+  * POST one point `{x:0, y:0}` → expect `xPx≈0, yPx≈0`.
+  * `{x:1, y:1}` → expect `xPx≈width-1, yPx≈height-1`.
+  * `{x:0.5, y:0.5}` → centered pixel.
+* **Single point accumulation:**
+
+  * `dataPoints = [{x:0.5,y:0.5}]`, `radiusPx=40`, `blurPx=0`
+  * Expect `nonZeroCount > 0`, `maxValue > 0`.
+* **Two clusters:**
+
+  * Points near left and right thirds; verify `nonZeroCount` and `maxValue` grow, and `heatLayerGray` (with `debugHeat=true`) shows two distinct lobes (greyscale image).
+* **Bounds & validation:**
+
+  * Points with x/y outside 0..1 → 400 (schema).
+  * Huge arrays (e.g., >5000 points) → 400 with a helpful error.
+* **Determinism:**
+
+  * Same input twice → identical `maxValue` and identical `heatLayerGray` string length (byte-for-byte equality if nothing random).
+
+**Definition of Done (Step 2):**
+
+* Endpoint returns screenshot base64 **plus** heat diagnostics built from normalized points.
+* Optional greyscale preview of the heat buffer available via `debugHeat=true`.
+* Mapping is correct across devices; accumulation and blur run within acceptable time.
+* Logs clearly identify phase/timings.
+
+---
+
+When these pass, we’ll do **Step 3**: color ramp + alpha + compositing the heat layer over the screenshot and returning the final heatmap PNG.

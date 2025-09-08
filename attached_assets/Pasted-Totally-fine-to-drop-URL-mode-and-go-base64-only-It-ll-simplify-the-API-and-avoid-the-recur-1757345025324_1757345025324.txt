@@ -1,0 +1,85 @@
+Totally fine to drop **URL mode** and go **base64-only**. It’ll simplify the API and avoid the recurring file-write/path headaches.
+
+Here’s a tight cleanup you can paste to the Replit assistant so it won’t break anything else.
+
+---
+
+# Remove URL mode (base64-only) — precise edits
+
+## 1) `server/schemas/heatmap.ts`
+
+* **Remove** `returnMode` from the schema (or keep it but **ignore** it—your call).
+* If you keep it for backward compatibility, change its default and allowed set so it can’t request URL mode:
+
+  * **Option A (remove):** delete `returnMode` from the schema.
+  * **Option B (ignore but keep):** keep `returnMode` in schema, but document it’s deprecated and the controller will always return base64.
+
+## 2) `server/controllers/heatmap.data.ts`
+
+* At the top (single parse/destructure), **do not** destructure `returnMode`. If it still exists, remove it from the destructuring list.
+* After compositing, **always** return base64:
+
+  ```ts
+  // after compositeHeatOverScreenshot(...)
+  const image = finalPngDataUrl; // data:image/png;base64,...
+  return res.json({
+    image,
+    meta: {
+      sourceUrl: url,
+      device,
+      countPoints: dataPoints.length,
+      radiusPx,
+      blurPx,
+      alpha,
+      blendMode,
+      ramp,
+      clipLowPercent,
+      clipHighPercent,
+      phase: "phase5.step3"
+    },
+    ...(debugHeat ? { debug: { heatLayerGray } } : {})
+  });
+  ```
+* **Delete** any branch that writes a file to `/public/heatmaps`, and any code that sets/returns `{ url: ... }`.
+* Ensure there’s **no** remaining reference to `returnMode` in this file (search for it).
+
+## 3) `server/services/imaging.ts`
+
+* If you added any helper that **writes files** (for URL mode), delete it or leave it unused (prefer delete to avoid confusion).
+* Keep only the in-memory functions:
+
+  * mapNormalizedPointsToPixels
+  * accumulateHeat
+  * blurHeatBuffer
+  * heatBufferToGreyscalePngBase64
+  * heatBufferToColorRgba
+  * compositeHeatOverScreenshot (returns data URL)
+
+## 4) `server/index.ts`
+
+* You can **leave** the static mount for `/heatmaps` as-is (harmless), or remove it for neatness:
+
+  * If removing, delete the `app.use("/heatmaps", express.static(...))` line and any mkdir for that folder.
+  * If you keep it, it won’t be used—no problem.
+
+## 5) Logging & meta
+
+* Ensure logs no longer mention `returnMode`.
+* Meta should continue to include `phase: "phase5.step3"` and all the knobs that still apply.
+
+## 6) Smoketest update (local)
+
+* Remove **Test 5 (URL mode)** from your PowerShell script, or comment it out.
+* The rest of Step-3 tests remain the same.
+
+---
+
+## Why your Test 5 failed
+
+Your controller likely skipped file writing (by design or guardrail), returned an empty `url` string, and the smoketest tried to download it. Since we’re descope-ing URL mode, this won’t recur.
+
+---
+
+If you want, I can hand you the trimmed smoketest (without Test 5) too. Otherwise, go ahead and run Step-3 tests again—everything should pass with base64-only.
+
+When you’re ready, we can roll into **Phase 7: AI-assisted hotspot detection** (DOM → hotspots JSON → same renderer), keeping this API contract stable.

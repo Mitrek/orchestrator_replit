@@ -6,7 +6,8 @@ import crypto from "crypto";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import rateLimit from "express-rate-limit";
-
+import express from "express"; // Import express to use express.static
+import path from "path"; // Import path for path joining
 
 import { requestTracingMiddleware, addReqIdToResponse } from "./middleware/requestTracing";
 
@@ -498,6 +499,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: error.message });
     }
   });
+
+  // Serve the dist folder for client routes
+  app.use(express.static(path.join(import.meta.dirname, "..", "dist")));
+
+  
 
   const httpServer = createServer(app);
   return httpServer;

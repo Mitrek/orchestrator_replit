@@ -16,9 +16,6 @@ import Settings from "./pages/settings";
 import CodeExamples from "./pages/code-examples";
 import RequestLogs from "./pages/request-logs";
 import Documentation from "./pages/documentation"; // Assuming documentation page exists
-import DevDiagnostics from "@/pages/DevDiagnostics";
-import DevHeatmap from "@/pages/DevHeatmap";
-import { FEATURE_HEATMAP_DEV_UI } from "@/config/featureFlags";
 
 function Router() {
   const [user, setUser] = useState<User | null>(null);
@@ -87,10 +84,6 @@ function Router() {
       <Route path="/docs" component={() => <Documentation user={user} />} />
       <Route path="/docs/examples" component={() => <CodeExamples user={user} />} />
       <Route path="/logs" component={() => <RequestLogs user={user} />} />
-      <Route path="/dev/diagnostics" component={DevDiagnostics} />
-      {FEATURE_HEATMAP_DEV_UI && (
-        <Route path="/dev/heatmap" component={DevHeatmap} />
-      )}
       <Route component={NotFound} />
     </Switch>
   );

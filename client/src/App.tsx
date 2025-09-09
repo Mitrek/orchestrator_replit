@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Switch, Route } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -16,6 +16,7 @@ import Settings from "./pages/settings";
 import CodeExamples from "./pages/code-examples";
 import RequestLogs from "./pages/request-logs";
 import Documentation from "./pages/documentation"; // Assuming documentation page exists
+import { FEATURE_HEATMAP_DEV_UI } from "./config/featureFlags";
 
 function Router() {
   const [user, setUser] = useState<User | null>(null);
@@ -84,6 +85,19 @@ function Router() {
       <Route path="/docs" component={() => <Documentation user={user} />} />
       <Route path="/docs/examples" component={() => <CodeExamples user={user} />} />
       <Route path="/logs" component={() => <RequestLogs user={user} />} />
+      <Route path="/auth/login" component={Login} />
+      <Route path="/auth/register" component={Register} />
+      <Route path="/dev/diagnostics" component={DevDiagnostics} />
+      {FEATURE_HEATMAP_DEV_UI && (
+        <Route path="/dev/heatmap" component={() => {
+          const DevHeatmap = React.lazy(() => import("./pages/DevHeatmap"));
+          return (
+            <React.Suspense fallback={<div>Loading...</div>}>
+              <DevHeatmap />
+            </React.Suspense>
+          );
+        }} />
+      )}
       <Route component={NotFound} />
     </Switch>
   );

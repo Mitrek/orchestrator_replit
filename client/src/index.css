@@ -70,7 +70,7 @@
   .hover-lift {
     @apply transition-all duration-200 ease-in-out;
   }
-  
+
   .hover-lift:hover {
     @apply -translate-y-1 shadow-lg;
   }

@@ -70,3 +70,6 @@ export function buildHealthReport(): HealthReport {
   if (notes.length) report.notes = notes;
   return report;
 }
+export function healthHandler(_req: any, res: any) {
+  res.status(200).send("ok");
+}

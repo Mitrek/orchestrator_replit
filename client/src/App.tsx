@@ -16,6 +16,8 @@ import Settings from "./pages/settings";
 import CodeExamples from "./pages/code-examples";
 import RequestLogs from "./pages/request-logs";
 import Documentation from "./pages/documentation"; // Assuming documentation page exists
+import { FEATURE_HEATMAP_DEV_UI } from "./config/featureFlags";
+import DevHeatmap from "./pages/DevHeatmap";
 
 function Router() {
   const [user, setUser] = useState<User | null>(null);
@@ -84,6 +86,9 @@ function Router() {
       <Route path="/docs" component={() => <Documentation user={user} />} />
       <Route path="/docs/examples" component={() => <CodeExamples user={user} />} />
       <Route path="/logs" component={() => <RequestLogs user={user} />} />
+      {FEATURE_HEATMAP_DEV_UI && (
+        <Route path="/dev/heatmap" component={DevHeatmap} />
+      )}
       <Route component={NotFound} />
     </Switch>
   );
@@ -97,6 +102,41 @@ function App() {
         <Router />
       </TooltipProvider>
     </QueryClientProvider>
+  );
+}
+
+function HomePage() {
+  return (
+    <div className="flex items-center justify-center min-h-screen">
+      <div className="text-center">
+        <h1 className="text-4xl font-bold text-gray-900 mb-4">Heatmap API</h1>
+        <p className="text-gray-600">Heatmap generation service is running</p>
+        {FEATURE_HEATMAP_DEV_UI && (
+          <div className="mt-4">
+            <a
+              href="/dev/heatmap"
+              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+            >
+              Open Dev UI
+            </a>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function NotFound() {
+  return (
+    <div className="flex items-center justify-center min-h-screen">
+      <div className="text-center">
+        <h1 className="text-4xl font-bold text-gray-900 mb-4">404</h1>
+        <p className="text-gray-600">Page not found</p>
+        <a href="/" className="text-blue-600 hover:text-blue-800 mt-4 inline-block">
+          Go home
+        </a>
+      </div>
+    </div>
   );
 }
 

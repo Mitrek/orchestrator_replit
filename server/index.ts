@@ -106,16 +106,15 @@ app.use((req, res, next) => {
   }
 
   // ALWAYS serve on PORT (only open port in the environment). Default 5000 locally.
-  const PORT = parseInt(process.env.PORT || "5000", 10);
-
+  const port = parseInt(process.env.PORT || "5000", 10);
   server.listen(
     {
-      port: PORT,
+      port,
       host: "0.0.0.0",
       reusePort: true,
     },
     () => {
-      log(`serving on port ${PORT}`);
+      log(`serving on port ${port}`);
     },
   );
 })();

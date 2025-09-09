@@ -104,30 +104,30 @@ app.use((req, res, next) => {
     await setupVite(app, server);
     
     // In development, also serve built client for /dev/heatmap route
-    const clientDist = path.resolve(process.cwd(), "client", "dist");
-    if (fs.existsSync(clientDist)) {
-      console.log("[Phase9] Serving client from:", clientDist);
-      app.use(express.static(clientDist));
+    const distPublic = path.resolve(process.cwd(), "dist", "public");
+    if (fs.existsSync(distPublic)) {
+      console.log("[Phase9] Serving client from:", distPublic);
+      app.use(express.static(distPublic));
       app.get("/dev/heatmap", (_req, res) => {
-        res.sendFile(path.join(clientDist, "index.html"));
+        res.sendFile(path.join(distPublic, "index.html"));
       });
     } else {
-      console.warn("[Phase9] client/dist not found; /dev/heatmap will 404 (safe).");
+      console.warn("[Phase9] dist/public not found; /dev/heatmap will 404 (safe).");
     }
   } else {
     // Guarded static serving for Phase 9
-    const clientDist = path.resolve(process.cwd(), "client", "dist");
+    const distPublic = path.resolve(process.cwd(), "dist", "public");
 
-    if (fs.existsSync(clientDist)) {
-      console.log("[Phase9] Serving client from:", clientDist);
-      app.use(express.static(clientDist));
+    if (fs.existsSync(distPublic)) {
+      console.log("[Phase9] Serving client from:", distPublic);
+      app.use(express.static(distPublic));
 
       // Serve the dev heatmap route
       app.get("/dev/heatmap", (_req, res) => {
-        res.sendFile(path.join(clientDist, "index.html"));
+        res.sendFile(path.join(distPublic, "index.html"));
       });
     } else {
-      console.warn("[Phase9] client/dist not found; /dev/heatmap will 404 (safe).");
+      console.warn("[Phase9] dist/public not found; /dev/heatmap will 404 (safe).");
     }
     serveStatic(app);
   }

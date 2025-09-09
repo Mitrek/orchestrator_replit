@@ -1,0 +1,291 @@
+Awesome—rolling back is a good call. Here’s a **from-scratch, precise implementation plan** the Replit AI assistant can follow to deliver **Phase 9 (Dev UI)** in one pass, already aligned with your **base64-only** requirement.
+
+---
+
+# Phase 9 — Dev UI (Base64-only) Implementation Plan
+
+## Ground rules
+
+* **No server refactors** beyond what already exists; we only **consume** the endpoints:
+
+  * `POST /api/v1/heatmap` (AI)
+  * `POST /api/v1/heatmap/data` (Data)
+  * `GET  /health`
+  * `GET  /api/v1/heatmap/diagnostics`
+* **Base64 only**: the UI assumes responses contain `body.base64` (`data:image/png;base64,...`).
+* **No new dependencies** (use existing React + Tailwind + Router).
+* All UI code goes under `client/src/...`.
+* Everything is gated behind a **feature flag** so it never leaks to product users.
+
+---
+
+## Step 0 — Feature flag
+
+**Create** `client/src/config/featureFlags.ts`
+
+* Export a single boolean from a Vite env var:
+
+  * `FEATURE_HEATMAP_DEV_UI = (import.meta as any).env?.VITE_FEATURE_HEATMAP_DEV_UI === "true";`
+
+**Set** in Replit Secrets (dev only):
+
+* `VITE_FEATURE_HEATMAP_DEV_UI=true`
+
+**Acceptance**
+
+* Turning the env var off removes the route (404).
+
+---
+
+## Step 1 — Route wiring (guarded)
+
+**Modify** your router (usually `client/src/App.tsx` or wherever `<Routes>` live):
+
+* `import { FEATURE_HEATMAP_DEV_UI } from "./config/featureFlags";`
+* Conditionally register **one route**:
+
+  * **Path:** `/dev/heatmap`
+  * **Element:** `<DevHeatmap />`
+* Optionally render a tiny **“Dev”** link in the footer **only** if `FEATURE_HEATMAP_DEV_UI` is true.
+
+**Acceptance**
+
+* Visiting `/dev/heatmap` returns the SPA shell (200) only when flag is true.
+
+---
+
+## Step 2 — HTTP helper (one small utility)
+
+**Create** `client/src/utils/http.ts`:
+
+* Export **`requestJson<T>`** with signature:
+
+  * `requestJson<T>({ url, method = "GET", body, signal }: { url: string; method?: "GET"|"POST"; body?: any; signal?: AbortSignal; }): Promise<{ status: number; durationMs: number; data: T | any }>`
+* Behavior:
+
+  * Set `Content-Type: application/json` for POST.
+  * Measure `durationMs` (client-side).
+  * Parse JSON; on non-2xx, still return `{ status, durationMs, data }` (don’t throw).
+  * On network/abort, **throw** `{ status: 0, durationMs, error: "NETWORK_ERROR" | "ABORTED" }`.
+
+**Acceptance**
+
+* Aborted requests throw with `error: "ABORTED"`.
+* Successful returns include `status` & `durationMs`.
+
+---
+
+## Step 3 — Dev page scaffold
+
+**Create** `client/src/pages/DevHeatmap.tsx`
+Layout: **two columns** (forms on left, console on right).
+
+### 3A. Left: Panels (Phase 9 includes 3 panels)
+
+1. **AI Heatmap** (base64 only)
+
+   * Inputs:
+
+     * `url` (text) — default: `https://www.acquisition.com/`
+     * `device` (select): `desktop` (default), `tablet`, `mobile`
+     * `persist` (checkbox) — default unchecked
+   * Buttons:
+
+     * **Generate AI Heatmap** (primary)
+     * **Reset** (secondary)
+   * Behavior:
+
+     * Validate `url` must start with `http://` or `https://` (block otherwise).
+     * Use `requestJson` → `POST /api/v1/heatmap` with `{ url, device }`.
+     * On submit:
+
+       * Create a fresh `AbortController`.
+       * Abort prior AI request (same panel) if pending.
+       * Disable the generate button while pending.
+     * Persistence (if checked):
+
+       * Store `{ url, device }` into `localStorage` key: `heatmap_dev_ai_form`.
+       * On mount, if persist is checked and data exists, preload.
+2. **Data Heatmap** (base64 only)
+
+   * Inputs:
+
+     * `url` (text)
+     * `device` (select)
+     * `dataPoints` (multiline text; JSON)
+     * `persist` (checkbox)
+   * Buttons:
+
+     * **Generate Data Heatmap**
+     * **Reset**
+   * Behavior:
+
+     * Validate `url` as above.
+     * Validate `dataPoints` JSON → must be an array of normalized points:
+
+       * `[ { "x": 0.32, "y": 0.18, "type": "click" }, ... ]`
+     * `POST /api/v1/heatmap/data` with `{ url, device, dataPoints }`.
+     * Abort previous Data request on re-run.
+     * Persistence: `heatmap_dev_data_form`.
+   * Prefill `dataPoints` with a valid small sample (5 entries).
+3. **Diagnostics**
+
+   * Buttons:
+
+     * **GET /health**
+     * **GET /api/v1/heatmap/diagnostics**
+   * Behavior:
+
+     * Each button performs GET and displays raw JSON in the Console.
+
+### 3B. Right: Console (shared output)
+
+* **Image Preview**
+
+  * Show `<img src={base64}>` if present.
+  * If base64 missing, show an empty state.
+  * Constrain max height; allow scroll.
+* **Meta Summary**
+
+  * Prominently show:
+
+    * `reqId` (if present)
+    * `meta.phase`, `meta.engine`, `meta.viewport.width/height`
+    * HTTP `status` & client `durationMs`
+* **Actions**
+
+  * **Copy base64** (copies full data URI)
+  * **Download PNG** (convert base64 to Blob → download, filename `heatmap-<ts>.png`)
+* **Raw JSON (Response)**
+
+  * Pretty print, but **truncate base64** field (e.g., show `data:image/png;base64,<length 2,048,000 bytes>` with only first 64 chars).
+* **Request log (last 5)**
+
+  * For each call:
+
+    * Timestamp ISO, endpoint, status, duration, and a toggle to show request body + a shortened response snippet.
+  * Newest on top; only keep 5 entries.
+
+**Acceptance**
+
+* Each panel runs independent requests (cancel previous on re-run).
+* Console always reflects the latest request of the panel that triggered it.
+* Copy & download actions work on the currently displayed image.
+
+---
+
+## Step 4 — Visuals (Tailwind)
+
+* Main container: `max-w-[1200px] mx-auto p-6`
+* Grid: `grid grid-cols-1 lg:grid-cols-2 gap-6`
+* Card: `rounded-xl border p-4`
+* Titles: `font-semibold`
+* JSON block: `font-mono text-sm whitespace-pre overflow-auto`
+* Buttons row: right-aligned, primary before secondary
+
+**Acceptance**
+
+* Responsive, readable, no overlapping UI.
+
+---
+
+## Step 5 — Client validation rules
+
+* URL must start with `http://` or `https://`; otherwise block with inline error and do not send request.
+* `dataPoints` must parse as array; otherwise inline error and block.
+
+**Acceptance**
+
+* Invalid inputs never hit the server.
+* Errors clear when user fixes the field.
+
+---
+
+## Step 6 — QA markers (for smoke test to detect)
+
+Ensure the Dev UI HTML contains these plain strings (for simple HTTP-text validation):
+
+* On the Dev page: include visible text `AI Heatmap — /api/v1/heatmap`
+* On the AI panel button: `Generate AI Heatmap`
+
+**Acceptance**
+
+* A simple GET of `/dev/heatmap` contains those strings (even before hydration).
+
+---
+
+## Step 7 — Defaults & samples
+
+* AI panel defaults:
+
+  * `url = https://www.acquisition.com/`
+  * `device = desktop`
+* Data panel defaults:
+
+  * same `url` & `device`
+  * `dataPoints` sample:
+
+    ```json
+    [
+      { "x": 0.32, "y": 0.18, "type": "click" },
+      { "x": 0.50, "y": 0.42, "type": "move"  },
+      { "x": 0.68, "y": 0.27, "type": "move"  },
+      { "x": 0.51, "y": 0.66, "type": "click" },
+      { "x": 0.40, "y": 0.82, "type": "move"  }
+    ]
+    ```
+
+**Acceptance**
+
+* With defaults, AI panel produces an image on first click.
+
+---
+
+## Step 8 — Definition of Done (Phase 9)
+
+* `/dev/heatmap` is accessible only when `VITE_FEATURE_HEATMAP_DEV_UI=true`.
+* **AI panel**: POST `/api/v1/heatmap` produces a **base64** PNG; image renders; meta + reqId show (if server provides reqId).
+* **Data panel**: POST `/api/v1/heatmap/data` with sample points produces a **base64** PNG; image renders; meta shows.
+* **Diagnostics panel**: both GETs return JSON in Console.
+* **UX**: request cancelation on re-run; last-5 request log; copy/download actions; input persistence per panel (if enabled).
+* **No URL mode anywhere**; the UI never expects file URLs.
+
+---
+
+## Step 9 — Minimal smoke test expectations (what we’ll verify later)
+
+1. `/dev/heatmap` returns 200 and contains `AI Heatmap — /api/v1/heatmap`.
+2. `POST /api/v1/heatmap` with defaults returns `{ base64, meta }` and base64 starts with `data:image/png;base64,`.
+3. `POST /api/v1/heatmap/data` with the sample `dataPoints` returns `{ base64, meta }`.
+4. Missing `url` returns **400** (server-side).
+5. Invalid `url` (no scheme) is blocked **client-side** (we won’t hit the server from the UI).
+
+*(If you want, I can provide the matching PowerShell script once you’re ready.)*
+
+---
+
+## Step 10 — Guardrails & logging (client only)
+
+* Never log the **entire** base64 to the console; truncate or log length.
+* When rendering the JSON response, truncate the base64 like:
+
+  * `base64: "data:image/png;base64,<length: 2,048,000 bytes>; prefix: data:image/png;base64,iVBOR..."`
+
+**Acceptance**
+
+* Dev tools and request log stay responsive even for large images.
+
+---
+
+## Final note to the Replit AI assistant (copy verbatim)
+
+* Do **not** add any new libraries.
+* Do **not** change server routes or payload shapes.
+* Implement the three panels and the shared Console exactly as described.
+* Assume **base64-only** for all heatmap responses.
+* Use the exact file paths and keys listed above.
+* Make sure `/dev/heatmap` HTML includes the marker texts so the smoke test can find them.
+
+---
+
+When this is merged and passes the Phase 9 DoD, we can move on to Phase 10+ (observability polish in the UI, bulk runs, etc.).

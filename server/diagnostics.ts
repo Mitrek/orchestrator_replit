@@ -105,12 +105,12 @@ async function checkAIProvider(): Promise<{ active: boolean; lastError: string |
 
 function getProviderName(): string {
   if (process.env.THUM_IO_KEY) return "thumio";
-  if (process.env.SCREENSHOT_MACHINE_KEY) return "screenshotmachine";
+  if (process.env.SCREENSHOTMACHINE_KEY) return "screenshotmachine";
   return "unknown";
 }
 
 function isProviderConfigured(): boolean {
-  return !!(process.env.THUM_IO_KEY || process.env.SCREENSHOT_MACHINE_KEY);
+  return !!(process.env.THUM_IO_KEY || process.env.SCREENSHOTMACHINE_KEY);
 }
 
 async function runGoldenQA(): Promise<Record<string, any>> {

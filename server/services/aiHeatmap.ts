@@ -1,5 +1,6 @@
 import { getAiHotspotsPhase7 } from "./aiHotspots";
 import { getScreenshotBuffer } from "./screenshot";
+import { getExternalScreenshotBase64 } from "./screenshotExternal";
 import { hotspotsToPoints } from "./hotspotsToPoints";
 import { renderFromPoints, type RenderKnobs } from "./renderer";
 import { ALLOWED_DEVICES, DEVICE_MAP, clampAndValidateHotspots, greedyDeoverlap, type Hotspot } from "./validation";
@@ -50,8 +51,17 @@ export async function makeAiHeatmapImage(params: {
     kernelSigmaPx: knobs.kernelSigmaPx ? Math.max(2, Math.min(48, knobs.kernelSigmaPx)) : knobs.kernelSigmaPx
   } : undefined;
 
-  // Get screenshot
-  const { png: screenshotPng } = await getScreenshotBuffer(url, device);
+  // Get screenshot with fallback
+  let screenshotPng: Buffer;
+  try {
+    const { png } = await getScreenshotBuffer(url, device);
+    screenshotPng = png;
+  } catch (e: any) {
+    // Fallback to the provider path used by the Data route (works on your env)
+    const { image: b64 } = await getExternalScreenshotBase64(url, device);
+    const pngData = b64.replace(/^data:image\/[a-z]+;base64,/, "");
+    screenshotPng = Buffer.from(pngData, "base64");
+  }
 
   // Check cache first
   const cacheEnabled = process.env.HOTSPOTS_CACHE !== "false";

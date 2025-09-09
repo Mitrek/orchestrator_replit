@@ -1,0 +1,157 @@
+Awesome — here’s **Step 1** with copy-pasteable edits and exact checks. Goal: **get the server green** (no client changes yet), stop the QA build crash, and expose `/health`.
+
+---
+
+# Step 1 — Get the server green (no client changes)
+
+## Objective
+
+* **Eliminate the QA crash**: stub QA so it doesn’t import renderer internals.
+* **Expose `/health`**: return simple `ok` for probes.
+* **Do not** change module system, run command, or add deps.
+* **Do not** touch client yet.
+
+---
+
+## 1) Find and neutralize the QA import that crashes the server
+
+You saw:
+
+```
+No matching export in "server/services/renderer.ts" for import "renderDataHeatmapToCanvas"
+at server/qa.ts:4:9
+```
+
+### 1.1 Locate QA usage
+
+In Replit shell:
+
+```bash
+rg -n "registerQa|qa\.ts|renderDataHeatmapToCanvas|diagnostics/qa" server || true
+```
+
+You should see `server/qa.ts` and where it’s registered (often in `server/routes.ts` or `server/index.ts`).
+
+### 1.2 Replace QA with a harmless stub
+
+**Edit: `server/qa.ts`** (replace the entire file with this stub)
+
+```ts
+// server/qa.ts
+import type { Express } from "express";
+
+// Phase 9 bootstrap: QA is disabled to avoid build-time coupling with renderer.
+// We’ll re-enable golden-image checks in a later phase without blocking server startup.
+export function registerQa(app: Express) {
+  app.get("/api/v1/heatmap/diagnostics/qa", (_req, res) => {
+    res.status(200).json({
+      qaEnabled: false,
+      reason: "QA disabled in Phase 9 bootstrap (goldens not wired)",
+      note: "This endpoint exists only to avoid 404s in tooling."
+    });
+  });
+}
+```
+
+**Why:** No imports from `renderer.ts`; no runtime dependency. Keeps the endpoint shape “present” but inert.
+
+### 1.3 Ensure the stub is wired (but does nothing dangerous)
+
+Open the file where QA is registered (likely `server/routes.ts` or `server/index.ts`) and confirm the pattern matches the stub:
+
+```ts
+import { registerQa } from "./qa"; // path may vary
+
+export function registerRoutes(app: Express) {
+  // ... your existing heatmap routes:
+  // app.post("/api/v1/heatmap", ...)
+  // app.post("/api/v1/heatmap/data", ...)
+  // app.get("/api/v1/heatmap/diagnostics", ...)
+
+  // QA (stubbed)
+  registerQa(app);
+}
+```
+
+If there’s currently a conditional flag around QA, keep it. The stub is safe either way.
+
+---
+
+## 2) Add or wire `/health` (one-liner)
+
+If you already have a helper in `server/health.ts`, either use it or just add a simple probe route.
+
+**Edit: `server/index.ts`** (or wherever the Express `app` is created):
+
+```ts
+// Add once, near other routes or after middleware:
+app.get("/health", (_req, res) => res.status(200).send("ok"));
+```
+
+> Keep this minimal. No DB checks, no provider calls. The smoke test expects `ok`.
+
+---
+
+## 3) Do **not** touch anything else
+
+* Do not change `package.json` `"type"`.
+* Do not add `server/package.json`.
+* Do not add a server TS build step.
+* Do not mount the client yet.
+* Do not import new UI libraries.
+
+---
+
+## 4) Restart and verify (tiny probes)
+
+Use the **same run command** that worked at the end of Phase 8.
+
+Then, from the shell (replace `$BASE`):
+
+```bash
+# Health
+curl -sS "$BASE/health"
+
+# AI route (expect JSON with data:image/png;base64, ...)
+curl -sS -X POST "$BASE/api/v1/heatmap" \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://www.acquisition.com/","device":"desktop"}' | head -c 400; echo
+
+# Data route (expect JSON with data:image/png;base64, ...)
+curl -sS -X POST "$BASE/api/v1/heatmap/data" \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://www.acquisition.com/","device":"desktop","dataPoints":[{"x":0.3,"y":0.2}]}' | head -c 400; echo
+
+# Diagnostics (should be 200 JSON)
+curl -sS "$BASE/api/v1/heatmap/diagnostics" | head -c 400; echo
+
+# QA stub (optional; should be 200 with qaEnabled:false)
+curl -sS "$BASE/api/v1/heatmap/diagnostics/qa" | head -c 400; echo
+```
+
+---
+
+## Pass criteria for Step 1
+
+* Server starts without crashing.
+* `GET /health` → `ok` (HTTP 200).
+* `POST /api/v1/heatmap` returns JSON with `"base64":"data:image/png;base64,..."`.
+* `POST /api/v1/heatmap/data` returns JSON with `"base64":"data:image/png;base64,..."`.
+* `GET /api/v1/heatmap/diagnostics` returns 200 JSON.
+* `GET /api/v1/heatmap/diagnostics/qa` returns 200 JSON with `qaEnabled:false`.
+
+---
+
+## If something still crashes
+
+* Paste the **first 20 lines** of the stack trace.
+* Also run:
+
+  ```bash
+  rg -n "renderDataHeatmapToCanvas" server || true
+  rg -n "from \"./services/renderer\"" server || true
+  ```
+
+  to confirm no lingering imports exist outside the QA stub.
+
+Once Step 1 passes, we’ll move to **Step 2** (guarded static serving + QA markers) with the server already healthy.

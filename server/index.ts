@@ -1,4 +1,5 @@
 import express, { type Request, Response, NextFunction } from "express";
+import cors from "cors";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 
@@ -102,7 +103,21 @@ app.use((req, res, next) => {
   if (app.get("env") === "development") {
     await setupVite(app, server);
   } else {
-    serveStatic(app);
+    // Serve built client after API routes are registered
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+    const clientDist = path.join(__dirname, "../dist");
+    app.use(express.static(clientDist));
+
+    // Route SPA paths (Dev UI)
+    app.get("/dev/heatmap", (_req, res) => {
+      res.sendFile(path.join(clientDist, "index.html"));
+    });
+
+    // Catch-all for SPA routing (after all API routes)
+    app.get("*", (_req, res) => {
+      res.sendFile(path.join(clientDist, "index.html"));
+    });
   }
 
   // ALWAYS serve on PORT (only open port in the environment). Default 5000 locally.

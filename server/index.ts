@@ -9,6 +9,7 @@ import { neonConfig } from "@neondatabase/serverless";
 import path from "path";
 import { fileURLToPath } from "url";
 import { buildHealthReport } from "./health"; // <-- added
+import fs from "fs";
 
 // Hard block any WS usage if some file tries to set it up later
 // @ts-ignore
@@ -102,6 +103,19 @@ app.use((req, res, next) => {
   if (app.get("env") === "development") {
     await setupVite(app, server);
   } else {
+    // Guarded static serving for Phase 9
+    const clientDist = path.join(import.meta.dirname, "..", "client", "dist");
+
+    if (fs.existsSync(clientDist)) {
+      app.use(express.static(clientDist));
+
+      // Serve the dev heatmap route
+      app.get("/dev/heatmap", (req, res) => {
+        res.sendFile(path.join(clientDist, "index.html"));
+      });
+    } else {
+      console.warn("[Phase9] client/dist not found; /dev/heatmap will 404 (safe).");
+    }
     serveStatic(app);
   }
 

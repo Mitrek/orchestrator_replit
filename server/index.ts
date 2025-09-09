@@ -102,15 +102,28 @@ app.use((req, res, next) => {
   // Dev vs Prod: Vite middleware or static serving
   if (app.get("env") === "development") {
     await setupVite(app, server);
+    
+    // In development, also serve built client for /dev/heatmap route
+    const clientDist = path.resolve(process.cwd(), "client", "dist");
+    if (fs.existsSync(clientDist)) {
+      console.log("[Phase9] Serving client from:", clientDist);
+      app.use(express.static(clientDist));
+      app.get("/dev/heatmap", (_req, res) => {
+        res.sendFile(path.join(clientDist, "index.html"));
+      });
+    } else {
+      console.warn("[Phase9] client/dist not found; /dev/heatmap will 404 (safe).");
+    }
   } else {
     // Guarded static serving for Phase 9
-    const clientDist = path.join(import.meta.dirname, "..", "client", "dist");
+    const clientDist = path.resolve(process.cwd(), "client", "dist");
 
     if (fs.existsSync(clientDist)) {
+      console.log("[Phase9] Serving client from:", clientDist);
       app.use(express.static(clientDist));
 
       // Serve the dev heatmap route
-      app.get("/dev/heatmap", (req, res) => {
+      app.get("/dev/heatmap", (_req, res) => {
         res.sendFile(path.join(clientDist, "index.html"));
       });
     } else {

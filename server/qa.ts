@@ -27,8 +27,8 @@ async function runQAForDevice(device: string): Promise<QAResult> {
   try {
     const viewport = getViewportForDevice(device as any);
     
-    // Check for golden file first - use robust path resolution
-    const goldenPath = path.resolve(import.meta.dirname, "..", "public", "qa", `golden-${device}.png`);
+    // Check for golden file first
+    const goldenPath = path.join(process.cwd(), "public", "qa", `golden-${device}.png`);
     
     let goldenBuffer: Buffer;
     try {
@@ -62,21 +62,6 @@ async function runQAForDevice(device: string): Promise<QAResult> {
     
     // Compute PSNR
     const { mse, psnr } = computePSNR(currentBuffer, goldenBuffer, width, height);
-    
-    // Handle NaN PSNR case
-    if (isNaN(psnr) || !isFinite(psnr)) {
-      return {
-        device,
-        goldenFound: true,
-        goldenSize,
-        renderSize,
-        mse,
-        psnr: 0,
-        pass: false,
-        reason: "psnr_nan"
-      };
-    }
-    
     const pass = psnr >= 35.0;
     
     return { 
@@ -110,9 +95,8 @@ export async function runGoldenQA(): Promise<QAResult[]> {
   return results;
 }
 
-export async function generateGoldenImages(): Promise<Array<{ device: string; success: boolean; size?: { width: number; height: number }; error?: string }>> {
-  // Use robust path resolution
-  const qaDir = path.resolve(import.meta.dirname, "..", "public", "qa");
+export async function generateGoldenImages(): Promise<void> {
+  const qaDir = path.join(process.cwd(), "public", "qa");
   
   // Ensure QA directory exists
   await fs.mkdir(qaDir, { recursive: true });

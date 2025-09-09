@@ -84,18 +84,11 @@ export function computePSNR(a: Buffer, b: Buffer, width: number, height: number)
   
   mse = mse / pixelCount;
   
-  // Handle edge case where MSE is 0 (perfect match)
   if (mse === 0) {
     return { mse: 0, psnr: 100 };
   }
   
   const psnr = 10 * Math.log10((255 * 255) / mse);
-  
-  // Handle NaN case
-  if (isNaN(psnr) || !isFinite(psnr)) {
-    return { mse, psnr: 0 };
-  }
-  
   return { mse, psnr };
 }
 
@@ -105,8 +98,7 @@ export async function savePng(canvas: Canvas, outPath: string): Promise<void> {
 }
 
 export async function loadQABaseScreenshot(device: "desktop" | "tablet" | "mobile"): Promise<Buffer> {
-  // Use robust path resolution from current module location
-  const basePath = path.resolve(import.meta.dirname, "..", "..", "public", "qa", `base-${device}.png`);
+  const basePath = path.join(process.cwd(), "public", "qa", `base-${device}.png`);
   
   try {
     return await fs.readFile(basePath);

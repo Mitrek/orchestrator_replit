@@ -130,7 +130,6 @@ async function runGoldenQA(): Promise<Array<any>> {
       reason: result.reason
     }));
   } catch (error: any) {
-    console.error("QA diagnostics error:", error);
     return [
       { device: "desktop", goldenFound: false, pass: false, reason: "qa_error" },
       { device: "tablet", goldenFound: false, pass: false, reason: "qa_error" },

@@ -44,11 +44,12 @@ export async function makeAiHeatmapImage(params: {
   const viewport = DEVICE_MAP[device];
 
   // Clamp knobs to safe ranges
+  const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
   const clampedKnobs = knobs ? {
     ...knobs,
-    alpha: knobs.alpha ? Math.max(0.1, Math.min(1, knobs.alpha)) : knobs.alpha,
-    kernelRadiusPx: knobs.kernelRadiusPx ? Math.max(8, Math.min(96, knobs.kernelRadiusPx)) : knobs.kernelRadiusPx,
-    kernelSigmaPx: knobs.kernelSigmaPx ? Math.max(2, Math.min(48, knobs.kernelSigmaPx)) : knobs.kernelSigmaPx
+    alpha: knobs.alpha !== undefined ? clamp(knobs.alpha, 0.1, 1) : undefined,
+    kernelRadiusPx: knobs.kernelRadiusPx !== undefined ? clamp(knobs.kernelRadiusPx, 8, 96) : undefined,
+    kernelSigmaPx: knobs.kernelSigmaPx !== undefined ? clamp(knobs.kernelSigmaPx, 2, 48) : undefined
   } : undefined;
 
   // Get screenshot with fallback
@@ -106,13 +107,27 @@ export async function makeAiHeatmapImage(params: {
   }
   const finalHotspots = greedyDeoverlap(filtered, { max: 8, iouThreshold: 0.4 });
 
-  // Convert hotspots to points - normalize coordinates (0-1)
-  const normalizedHotspots = finalHotspots.map(h => ({
-    ...h,
-    x: h.x / viewport.width,  // Normalize to 0-1
-    y: h.y / viewport.height
+  // Convert hotspots to points - use real viewport then normalize for renderer
+  // finalHotspots are already normalized [0..1] by the AI.
+  // 1) Use the real viewport to get *pixel* points.
+  // 2) Convert those pixel points back to normalized for the renderer.
+  const pxPoints = hotspotsToPoints(finalHotspots, viewport, 800);
+  const points = pxPoints.map(p => ({
+    x: p.x / viewport.width,
+    y: p.y / viewport.height,
+    weight: p.weight
   }));
-  const points = hotspotsToPoints(normalizedHotspots, { width: 1, height: 1 }, 800);
+
+  // Add debugging guards
+  if (screenshotPng.length < 200) {
+    console.warn("[/api/v1/heatmap] Screenshot buffer is tiny — likely placeholder/dummy.");
+  }
+
+  const maxX = Math.max(...points.map(p => p.x));
+  const maxY = Math.max(...points.map(p => p.y));
+  if (maxX <= 0.005 && maxY <= 0.005) {
+    console.warn("[/api/v1/heatmap] Points look collapsed near (0,0) — check viewport/normalization.");
+  }
 
   // Render heatmap
   const heatPng = await renderFromPoints({

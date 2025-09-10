@@ -48,18 +48,18 @@ type ProviderResult =
   | { ok: false; provider: string; error: string };
 
 async function tryProviders(url: string): Promise<ProviderResult> {
-  // Try Thum.io first
+  // Try ScreenshotMachine first
   try {
-    const image = await thumIo(url);
-    return { ok: true, image, provider: "thum.io" };
+    const image = await screenshotMachine(url);
+    return { ok: true, image, provider: "screenshotmachine" };
   } catch (e: any) {
     // continue
   }
 
-  // Then ScreenshotMachine
+  // Then Thum.io as fallback
   try {
-    const image = await screenshotMachine(url);
-    return { ok: true, image, provider: "screenshotmachine" };
+    const image = await thumIo(url);
+    return { ok: true, image, provider: "thum.io" };
   } catch (e: any) {
     return { ok: false, provider: "all", error: String(e?.message ?? e) };
   }

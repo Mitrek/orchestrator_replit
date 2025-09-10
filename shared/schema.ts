@@ -26,7 +26,6 @@ export const apiKeys = pgTable("api_keys", {
   keyHash: text("key_hash").notNull().unique(),
   keyPrefix: text("key_prefix").notNull(), // First 8 characters for display
   isActive: boolean("is_active").default(true),
-  rateLimit: integer("rate_limit").default(1000), // requests per hour
   createdAt: timestamp("created_at").defaultNow(),
   lastUsedAt: timestamp("last_used_at"),
 });

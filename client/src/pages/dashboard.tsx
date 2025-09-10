@@ -51,7 +51,6 @@ export default function Dashboard({ user }: { user: User | null }) {
     resolver: zodResolver(insertApiKeySchema.omit({ userId: true })),
     defaultValues: {
       name: "",
-      rateLimit: 1000,
       isActive: true,
     },
   });

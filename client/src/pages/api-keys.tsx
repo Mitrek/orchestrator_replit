@@ -44,7 +44,6 @@ import { useState } from "react";
               resolver: zodResolver(insertApiKeySchema.omit({ userId: true })),
               defaultValues: {
                 name: "",
-                rateLimit: 1000,
                 isActive: true,
               },
             });
@@ -176,33 +175,7 @@ import { useState } from "react";
                               )}
                             />
 
-                            <FormField
-                              control={form.control}
-                              name="rateLimit"
-                              render={({ field }) => (
-                                <FormItem>
-                                  <FormLabel>Rate Limit (requests per hour)</FormLabel>
-                                  <Select 
-                                    onValueChange={(value) => field.onChange(parseInt(value))} 
-                                    defaultValue={field.value?.toString()}
-                                  >
-                                    <FormControl>
-                                      <SelectTrigger data-testid="select-rate-limit">
-                                        <SelectValue placeholder="Select rate limit" />
-                                      </SelectTrigger>
-                                    </FormControl>
-                                    <SelectContent>
-                                      <SelectItem value="100">100 requests/hour</SelectItem>
-                                      <SelectItem value="500">500 requests/hour</SelectItem>
-                                      <SelectItem value="1000">1,000 requests/hour</SelectItem>
-                                      <SelectItem value="5000">5,000 requests/hour</SelectItem>
-                                      <SelectItem value="10000">10,000 requests/hour</SelectItem>
-                                    </SelectContent>
-                                  </Select>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
-                            />
+                            
 
                             <div className="flex justify-end space-x-2">
                               <Button 

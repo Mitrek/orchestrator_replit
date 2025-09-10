@@ -108,9 +108,6 @@ export function ApiKeyCard({
         </div>
         
         <div className="flex items-center justify-between text-sm">
-          <span className="text-muted-foreground">
-            Rate limit: {apiKey.rateLimit?.toLocaleString() || 1000} req/hour
-          </span>
           <span className="text-muted-foreground" data-testid={`api-key-usage-${apiKey.id}`}>
             Used: {usageCount} ({typeof usagePercentage === 'number' ? usagePercentage.toFixed(1) + '%' : usagePercentage})
           </span>

@@ -41,27 +41,7 @@ const apiLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// If apiKeyAuth attached req.apiKey, we can rate-limit per key using your storage stats
-async function rateLimitByApiKey(req: any, res: any, next: any) {
-  try {
-    const key = req.apiKey;
-    if (!key) return next();
 
-    const stats = await storage.getApiKeyUsageStats(key.id, 1);
-    if (stats.count >= key.rateLimit) {
-      return res.status(429).json({
-        error: "Rate limit exceeded for this API key",
-        limit: key.rateLimit,
-        used: stats.count,
-        resetTime: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-      });
-    }
-    next();
-  } catch (err) {
-    console.error("Rate limiting error:", err);
-    next(); // fail-open on limiter errors
-  }
-}
 
 // ----------------------------- JWT Middleware --------------------------------
 function authenticateToken(req: any, res: any, next: any) {
@@ -354,7 +334,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get(
     "/api/subscription",
     apiKeyAuth,
-    rateLimitByApiKey,
     async (req, res) => {
       try {
         const userId = (req as any).userId as string;
@@ -451,7 +430,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         id,
         userId,
         name,
-        rateLimit,
         isActive,
         keyPrefix,
         createdAt,
@@ -463,7 +441,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         name,
         id,
         userId,
-        rateLimit,
         isActive,
         keyPrefix,
         createdAt,

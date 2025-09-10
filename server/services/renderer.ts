@@ -30,35 +30,45 @@ export async function renderFromPoints(opts: {
   const { screenshotPng, viewport, points, knobs = {} } = opts;
   const finalKnobs = { ...DEFAULT_KNOBS, ...knobs };
 
-  // Create canvas with viewport dimensions
-  const canvas = createCanvas(viewport.width, viewport.height);
+  // Load and draw screenshot - properly handle Buffer
+  const screenshot = await loadImage(screenshotPng);
+  
+  // Get actual image dimensions
+  const imgWidth = screenshot.width;
+  const imgHeight = screenshot.height;
+  
+  // Create canvas with actual image dimensions (not arbitrary viewport)
+  const canvas = createCanvas(imgWidth, imgHeight);
   const ctx = canvas.getContext("2d");
 
-  // Load and draw screenshot
-  const screenshot = await loadImage(screenshotPng);
-  ctx.drawImage(screenshot, 0, 0, viewport.width, viewport.height);
+  // Draw screenshot at full size
+  ctx.drawImage(screenshot, 0, 0);
 
   if (points.length === 0) {
     return canvas.toBuffer("image/png");
   }
 
-  // Create heatmap overlay
-  const heatmapCanvas = createCanvas(viewport.width, viewport.height);
+  // Create heatmap overlay with same dimensions as screenshot
+  const heatmapCanvas = createCanvas(imgWidth, imgHeight);
   const heatCtx = heatmapCanvas.getContext("2d");
 
   // Generate heat gradient
   const gradient = createHeatGradient(heatCtx, finalKnobs.ramp);
 
-  // Draw heat points
+  // Draw heat points - scale coordinates to actual image size
   points.forEach(point => {
     const weight = point.weight || 1.0;
     const intensity = Math.max(finalKnobs.clipMin || 0, Math.min(finalKnobs.clipMax || 1, weight));
     
-    drawHeatPoint(heatCtx, point.x, point.y, intensity, finalKnobs.kernelRadiusPx || 40);
+    // Scale normalized coordinates (0-1) to actual image dimensions
+    const scaledX = point.x * imgWidth;
+    const scaledY = point.y * imgHeight;
+    
+    drawHeatPoint(heatCtx, scaledX, scaledY, intensity, finalKnobs.kernelRadiusPx || 40);
   });
 
   // Apply gradient mapping
-  applyGradientMap(heatCtx, gradient, viewport.width, viewport.height);
+  applyGradientMap(heatCtx, gradient, imgWidth, imgHeight);
 
   // Composite with screenshot
   ctx.globalAlpha = finalKnobs.alpha;

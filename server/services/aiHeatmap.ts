@@ -106,8 +106,13 @@ export async function makeAiHeatmapImage(params: {
   }
   const finalHotspots = greedyDeoverlap(filtered, { max: 8, iouThreshold: 0.4 });
 
-  // Convert hotspots to points
-  const points = hotspotsToPoints(finalHotspots, viewport, 800);
+  // Convert hotspots to points - normalize coordinates (0-1)
+  const normalizedHotspots = finalHotspots.map(h => ({
+    ...h,
+    x: h.x / viewport.width,  // Normalize to 0-1
+    y: h.y / viewport.height
+  }));
+  const points = hotspotsToPoints(normalizedHotspots, { width: 1, height: 1 }, 800);
 
   // Render heatmap
   const heatPng = await renderFromPoints({
@@ -149,6 +154,9 @@ export async function makeAiHeatmapImage(params: {
         accepted: finalHotspots.length,
         pruned: hotspotsResult.meta.requested - finalHotspots.length,
         parity
+      },
+      actualImageDimensions: {
+        note: "Canvas uses actual screenshot dimensions, not viewport dimensions"
       },
       durationMs,
       timestamp: new Date().toISOString()

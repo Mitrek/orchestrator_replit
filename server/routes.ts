@@ -436,10 +436,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const keyPrefixHex = crypto.randomBytes(4).toString("hex"); // 8 chars
       const body = crypto.randomBytes(24).toString("base64url"); // ~32 url-safe
-      const plaintextKey = `ai_lure_${keyPrefixHex}_${body}`;
+      const plaintextKey = `cimple_${keyPrefixHex}_${body}`;
 
       const keyHash = await bcrypt.hash(plaintextKey, 12);
-      const displayPrefix = `ai_lure_${keyPrefixHex}`;
+      const displayPrefix = `cimple_${keyPrefixHex}`;
 
       const created = await storage.createApiKey({
         ...validatedData,

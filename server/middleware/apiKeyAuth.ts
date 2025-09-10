@@ -14,8 +14,8 @@ const HASH_ONLY_SECRET = false;
 
 function parseApiKey(raw: string | undefined) {
   const trimmed = (raw || "").trim();
-  // ai_lure_<8-hex>_<url-safe-secret>
-  const m = /^([a-z]+_[a-z]+_[a-f0-9]{8})_([A-Za-z0-9_-]{16,})$/.exec(trimmed);
+  // cimple_<8-hex>_<url-safe-secret>
+  const m = /^([a-z]+_[a-f0-9]{8})_([A-Za-z0-9_-]{16,})$/.exec(trimmed);
   if (!m) return null;
   const [, prefix, secret] = m;
   return { prefix, secret, full: trimmed };

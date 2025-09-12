@@ -1,4 +1,3 @@
-
 import { createCanvas, Image } from "@napi-rs/canvas";
 import { getExternalScreenshotBase64 } from "./screenshotExternal";
 
@@ -59,7 +58,7 @@ function sanitizeDataPoints(dataPoints: any[]): Array<{ x: number; y: number; ty
   if (!Array.isArray(dataPoints) || dataPoints.length === 0) {
     throw new Error('dataPoints[] required');
   }
-  
+
   return dataPoints.map(point => ({
     x: Math.max(0, Math.min(1, Number(point.x) || 0)),
     y: Math.max(0, Math.min(1, Number(point.y) || 0)),
@@ -104,7 +103,7 @@ function renderHeatmapToCanvas(
       spot.x, spot.y, 0,
       spot.x, spot.y, 50 * spot.intensity
     );
-    
+
     gradient.addColorStop(0, `rgba(255, 0, 0, ${spot.intensity * 0.8})`);
     gradient.addColorStop(0.5, `rgba(255, 255, 0, ${spot.intensity * 0.4})`);
     gradient.addColorStop(1, 'rgba(255, 255, 0, 0)');
@@ -174,7 +173,7 @@ function renderDataHeatmapToCanvas(
 
 export async function generateHeatmap(params: HeatmapArgs): Promise<HeatmapResponse> {
   const t0 = Date.now();
-  
+
   validateUrl(params.url);
   const device = sanitizeDevice(params.device);
   const viewport = VIEWPORTS[device];
@@ -196,12 +195,10 @@ export async function generateHeatmap(params: HeatmapArgs): Promise<HeatmapRespo
     // Render heatmap
     const base64 = renderHeatmapToCanvas(screenshotBase64, hotspots, viewport);
 
-    const durationMs = Date.now() - t0;
-
     console.log(JSON.stringify({
       endpoint: '/api/v1/heatmap',
       device,
-      durationMs,
+      durationMs: Date.now() - t0,
       width: viewport.width,
       height: viewport.height,
       sourceUrl: params.url
@@ -210,20 +207,20 @@ export async function generateHeatmap(params: HeatmapArgs): Promise<HeatmapRespo
     return {
       base64,
       meta: {
-        phase: 'phase7',
-        engine: 'data',
-        sourceUrl: params.url,
+        phase: "phase10",
+        engine: "data",
         device,
         viewport,
-        durationMs,
-        timestamp: new Date().toISOString()
-      }
+        sourceUrl: params.url,
+        durationMs: Date.now() - t0,
+        timestamp: new Date().toISOString(),
+      },
     };
   } catch (error: any) {
     const errorMsg = error?.message?.includes('HTTP') ? 
       `SCREENSHOT_PROVIDER_FAILED: ${error.message}` : 
       error?.message || 'Unknown error';
-      
+
     console.log(JSON.stringify({
       endpoint: '/api/v1/heatmap',
       error: errorMsg,
@@ -235,7 +232,7 @@ export async function generateHeatmap(params: HeatmapArgs): Promise<HeatmapRespo
 
 export async function generateDataHeatmap(params: DataHeatmapArgs): Promise<HeatmapResponse> {
   const t0 = Date.now();
-  
+
   validateUrl(params.url);
   const device = sanitizeDevice(params.device);
   const viewport = VIEWPORTS[device];
@@ -256,12 +253,10 @@ export async function generateDataHeatmap(params: DataHeatmapArgs): Promise<Heat
     // Render data heatmap
     const base64 = renderDataHeatmapToCanvas(screenshotBase64, dataPoints, viewport);
 
-    const durationMs = Date.now() - t0;
-
     console.log(JSON.stringify({
       endpoint: '/api/v1/heatmap/data',
       device,
-      durationMs,
+      durationMs: Date.now() - t0,
       width: viewport.width,
       height: viewport.height,
       sourceUrl: params.url,
@@ -271,20 +266,20 @@ export async function generateDataHeatmap(params: DataHeatmapArgs): Promise<Heat
     return {
       base64,
       meta: {
-        phase: 'phase7',
-        engine: 'data',
-        sourceUrl: params.url,
+        phase: "phase10",
+        engine: "data",
         device,
         viewport,
-        durationMs,
-        timestamp: new Date().toISOString()
-      }
+        sourceUrl: params.url,
+        durationMs: Date.now() - t0,
+        timestamp: new Date().toISOString(),
+      },
     };
   } catch (error: any) {
     const errorMsg = error?.message?.includes('HTTP') ? 
       `SCREENSHOT_PROVIDER_FAILED: ${error.message}` : 
       error?.message || 'Unknown error';
-      
+
     console.log(JSON.stringify({
       endpoint: '/api/v1/heatmap/data',
       error: errorMsg,

@@ -373,22 +373,29 @@ export async function postHeatmapData(req: Request, res: Response) {
       });
     }
 
+    // Screenshot provider failure - return 502
+    const msg = (err && err.message) ? err.message : "unknown";
+    const isScreenshotFail = /SCREENSHOT_PROVIDER_FAILED/i.test(msg) || /tiny_png/i.test(msg);
+
+    const status = isScreenshotFail ? 502 : 500;
+    const errorCode = isScreenshotFail ? "SCREENSHOT_FAILED" : "HEATMAP_DATA_FAILED";
+
     jlog({
       ts: new Date().toISOString(),
       level: "error",
       requestId,
       route,
       method: "POST",
-      status: 500,
+      status,
       durationMs,
-      errorCode: "HEATMAP_DATA_FAILED",
-      errorMessage: String(err?.message ?? err),
+      errorCode,
+      errorMessage: msg,
     });
     
-    return res.status(500).json({
-      error: "Failed to generate data heatmap",
-      code: "HEATMAP_DATA_FAILED", 
-      message: err?.message ?? String(err),
+    return res.status(status).json({
+      error: isScreenshotFail ? "screenshot_failed" : "Failed to generate data heatmap",
+      code: errorCode,
+      details: msg,
       requestId
     });
   }

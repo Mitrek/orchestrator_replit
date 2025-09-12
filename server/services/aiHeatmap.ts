@@ -23,7 +23,6 @@ export async function makeAiHeatmapImage(params: {
       model: "gpt-4o-mini";
       fallback: boolean;
       promptHash: string;
-      cached?: boolean;
       requested: number;
       accepted: number;
       pruned: number;
@@ -164,7 +163,6 @@ export async function makeAiHeatmapImage(params: {
         model: "gpt-4o-mini",
         fallback: hotspotsResult.meta.fallback || false,
         promptHash: hotspotsResult.meta.promptHash,
-        cached,
         requested: hotspotsResult.meta.requested,
         accepted: finalHotspots.length,
         pruned: hotspotsResult.meta.requested - finalHotspots.length,

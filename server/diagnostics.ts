@@ -1,7 +1,7 @@
 
 import { Request, Response } from "express";
 import { metrics } from "./metrics";
-import { getCacheStats } from "./services/hotspotsCache";
+
 import { ERROR_TYPES } from "./logger";
 
 // Recent errors storage (ring buffer)
@@ -28,7 +28,6 @@ export async function handleDiagnostics(req: Request, res: Response): Promise<vo
   try {
     const runQA = req.query.qa === "1";
     const routeMetrics = metrics.getMetrics();
-    const cacheStats = getCacheStats();
 
     // Provider health checks
     const screenshotProvider = await checkScreenshotProvider();
@@ -50,8 +49,7 @@ export async function handleDiagnostics(req: Request, res: Response): Promise<vo
         providerConfigured: isProviderConfigured()
       },
       metrics: {
-        routes: routeMetrics,
-        cache: cacheStats
+        routes: routeMetrics
       },
       providers: {
         screenshot: screenshotProvider,

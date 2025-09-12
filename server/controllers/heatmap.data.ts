@@ -1,402 +1,137 @@
-
+// server/controllers/heatmap.data.ts
 import type { Request, Response } from "express";
 import { nanoid } from "nanoid";
 import { performance } from "node:perf_hooks";
 import { heatmapDataRequestSchema } from "../schemas/heatmap";
-import { getExternalScreenshotBase64 } from "../services/screenshotExternal";
-import { 
-  getImageDimensions, 
-  mapNormalizedPointsToPixels, 
-  accumulateHeat, 
-  blurHeatBuffer, 
-  heatBufferToGreyscalePngBase64,
-  heatBufferToColorRgba,
-  compositeHeatOverScreenshot
-} from "../services/imaging";
+import { generateDataHeatmap } from "../services/heatmap";
 
-function jlog(o: any) {
-  console.log(JSON.stringify(o));
+function jlog(o: Record<string, unknown>) {
+  try {
+    // Keep logs single-line & JSON for easy ingestion
+    // eslint-disable-next-line no-console
+    console.log(JSON.stringify(o));
+  } catch {
+    // ignore logging errors
+  }
 }
 
 export async function postHeatmapData(req: Request, res: Response) {
   const t0 = performance.now();
-  const requestId = nanoid();
+  const reqId = nanoid();
   const route = "/api/v1/heatmap/data";
 
-  try {
-    // Validate input
-    const parsed = heatmapDataRequestSchema.parse(req.body);
-    
-    // Single source of truth - destructure all knobs at once
-    const {
-      url,
-      device = "desktop",
-      dataPoints,
-      radiusPx = 40,
-      blurPx = 24,
-      intensityPerPoint = 1.0,
-      debugHeat = false,
+  // Add reqId to locals so downstream middleware can also use it (if any)
+  (res.locals as any).reqId = reqId;
 
-      // Step-3 knobs (new)
-      alpha: alphaRaw = 0.60,
-      blendMode = "lighter",
-      ramp = "classic",
-      clipLowPercent = 0,
-      clipHighPercent = 100
-    } = parsed;
-    
-    // Clamp alpha
-    const alpha = Math.max(0, Math.min(1, alphaRaw));
+  try {
+    // ---- 1) Validate input (Zod) ----
+    const parsed = heatmapDataRequestSchema.parse(req.body);
+    const { url, device = "desktop", dataPoints } = parsed;
 
     jlog({
       ts: new Date().toISOString(),
       level: "info",
-      requestId,
+      reqId,
       route,
       method: "POST",
-      phase: "step2",
-      sourceUrl: url,
+      phase: "start",
       device,
-      points: dataPoints.length,
-      radiusPx,
-      blurPx
+      sourceUrl: url,
+      pointCount: Array.isArray(dataPoints) ? dataPoints.length : 0,
     });
 
-    // Get screenshot
-    let screenshotResult;
-    try {
-      screenshotResult = await getExternalScreenshotBase64(url, device);
-
-      jlog({
-        ts: new Date().toISOString(),
-        level: "info",
-        requestId,
-        route,
-        phase: "screenshot_ok",
-        provider: screenshotResult.provider
-      });
-    } catch (err: any) {
-      const durationMs = Math.round(performance.now() - t0);
-      
-      jlog({
-        ts: new Date().toISOString(),
-        level: "error",
-        requestId,
-        route,
-        phase: "screenshot_failed",
-        provider: err?.provider || "unknown",
-        errorMessage: err?.message,
-        durationMs
-      });
-
-      return res.status(502).json({
-        error: "screenshot_failed",
-        provider: err?.provider || "unknown",
-        details: err?.message || String(err),
-        requestId
-      });
-    }
-
-    // Extract image dimensions
-    let width: number, height: number;
-    try {
-      const dimensions = await getImageDimensions(screenshotResult.image);
-      width = dimensions.width;
-      height = dimensions.height;
-    } catch (err: any) {
-      jlog({
-        ts: new Date().toISOString(),
-        level: "error",
-        requestId,
-        route,
-        phase: "dimension_extraction_failed",
-        errorMessage: err?.message,
-      });
-
-      return res.status(500).json({
-        error: "dimension_extraction_failed",
-        details: err?.message || String(err),
-        requestId
-      });
-    }
-
-    // Map normalized points to pixels
-    let pixelPoints;
-    const tMap = performance.now();
-    try {
-      pixelPoints = mapNormalizedPointsToPixels(dataPoints, width, height);
-    } catch (err: any) {
-      jlog({
-        ts: new Date().toISOString(),
-        level: "error",
-        requestId,
-        route,
-        phase: "mapping_failed",
-        errorMessage: err?.message,
-      });
-
-      return res.status(500).json({
-        error: "accumulation_failed",
-        phase: "accumulate",
-        details: err?.message || String(err),
-        requestId
-      });
-    }
-    const mapDurationMs = Math.round(performance.now() - tMap);
-
-    // Accumulate heat
-    let heatResult;
-    const tAccumulate = performance.now();
-    try {
-      heatResult = accumulateHeat(width, height, pixelPoints, {
-        radiusPx,
-        intensityPerPoint,
-        cap: null
-      });
-    } catch (err: any) {
-      jlog({
-        ts: new Date().toISOString(),
-        level: "error",
-        requestId,
-        route,
-        phase: "accumulation_failed",
-        errorMessage: err?.message,
-      });
-
-      return res.status(500).json({
-        error: "accumulation_failed",
-        phase: "accumulate",
-        details: err?.message || String(err),
-        requestId
-      });
-    }
-    const accumulateDurationMs = Math.round(performance.now() - tAccumulate);
-
-    // Apply blur if specified
-    let blurDurationMs = 0;
-    let nonZeroCountBlurred = heatResult.nonZeroCount; // default to pre-blur count
-    if (blurPx > 0) {
-      const tBlur = performance.now();
-      try {
-        const blurResult = blurHeatBuffer(heatResult.buffer, width, height, { blurPx });
-        heatResult.buffer = blurResult.buffer;
-        heatResult.maxValue = blurResult.maxValue;
-        
-        // Count non-zero pixels after blur
-        nonZeroCountBlurred = 0;
-        for (let i = 0; i < heatResult.buffer.length; i++) {
-          if (heatResult.buffer[i] > 0) {
-            nonZeroCountBlurred++;
-          }
-        }
-      } catch (err: any) {
-        jlog({
-          ts: new Date().toISOString(),
-          level: "error",
-          requestId,
-          route,
-          phase: "blur_failed",
-          errorMessage: err?.message,
-        });
-
-        return res.status(500).json({
-          error: "blur_failed",
-          phase: "blur",
-          details: err?.message || String(err),
-          requestId
-        });
-      }
-      blurDurationMs = Math.round(performance.now() - tBlur);
-    }
-
-    // Step 3: Colorize heat buffer
-    let heatRgba: Uint8ClampedArray;
-    const tColorize = performance.now();
-    try {
-      heatRgba = heatBufferToColorRgba(heatResult.buffer, width, height, {
-        ramp,
-        clipLowPercent,
-        clipHighPercent
-      });
-    } catch (err: any) {
-      jlog({
-        ts: new Date().toISOString(),
-        level: "error",
-        requestId,
-        route,
-        phase: "colorize_failed",
-        errorMessage: err?.message,
-      });
-
-      return res.status(500).json({
-        error: "colorize_failed",
-        phase: "colorize",
-        details: err?.message || String(err),
-        requestId
-      });
-    }
-    const colorizeDurationMs = Math.round(performance.now() - tColorize);
-
-    // Step 3: Composite heat over screenshot
-    let finalImage: string;
-    const tComposite = performance.now();
-    try {
-      finalImage = await compositeHeatOverScreenshot({
-        screenshotPngBase64: screenshotResult.image,
-        heatRgba,
-        width,
-        height,
-        alpha,
-        blendMode
-      });
-    } catch (err: any) {
-      jlog({
-        ts: new Date().toISOString(),
-        level: "error",
-        requestId,
-        route,
-        phase: "composite_failed",
-        errorMessage: err?.message,
-      });
-
-      return res.status(500).json({
-        error: "composite_failed",
-        phase: "composite",
-        details: err?.message || String(err),
-        requestId
-      });
-    }
-    const compositeDurationMs = Math.round(performance.now() - tComposite);
-
-    // Generate debug heat layer if requested
-    let heatLayerGray: string | undefined;
-    if (debugHeat) {
-      try {
-        heatLayerGray = heatBufferToGreyscalePngBase64(heatResult.buffer, width, height);
-      } catch (err: any) {
-        jlog({
-          ts: new Date().toISOString(),
-          level: "warn",
-          requestId,
-          route,
-          phase: "debug_heat_failed",
-          errorMessage: err?.message,
-        });
-        // Don't fail the request, just skip debug output
-      }
-    }
+    // ---- 2) Delegate to service (does screenshot + composite) ----
+    const resp = await generateDataHeatmap({
+      url,
+      device,
+      dataPoints,
+    });
 
     const durationMs = Math.round(performance.now() - t0);
 
     jlog({
       ts: new Date().toISOString(),
       level: "info",
-      requestId,
+      reqId,
       route,
       method: "POST",
+      phase: "done",
       status: 200,
+      device,
+      sourceUrl: url,
       durationMs,
-      timings: {
-        map: mapDurationMs,
-        accumulate: accumulateDurationMs,
-        blur: blurDurationMs,
-        colorize: colorizeDurationMs,
-        composite: compositeDurationMs
-      },
-      width,
-      height,
-      provider: screenshotResult.provider
+      width: resp.meta?.viewport?.width,
+      height: resp.meta?.viewport?.height,
+      engine: resp.meta?.engine,
+      pointCount: Array.isArray(dataPoints) ? dataPoints.length : 0,
     });
 
-    // Prepare sample of mapped points (first 5)
-    const samplePoints = dataPoints.slice(0, 5).map((point, index) => ({
-      xNorm: point.x,
-      yNorm: point.y,
-      xPx: pixelPoints[index].xPx,
-      yPx: pixelPoints[index].yPx
-    }));
+    // Echo reqId in the response meta for easier tracing
+    const meta = { ...resp.meta, reqId };
 
     return res.status(200).json({
-      image: finalImage,
-      heat: {
-        width,
-        height,
-        maxValue: heatResult.maxValue,
-        nonZeroCount: heatResult.nonZeroCount,
-        nonZeroCountBlurred,
-        sample: samplePoints
-      },
-      debug: heatLayerGray ? { heatLayerGray } : {},
-      meta: {
-        sourceUrl: url,
-        device,
-        countPoints: dataPoints.length,
-        radiusPx,
-        intensityPerPoint,
-        blurPx,
-        alpha,
-        blendMode,
-        ramp,
-        clipLowPercent,
-        clipHighPercent,
-        phase: "phase5.step3"
-      }
+      base64: resp.base64,
+      meta,
     });
-
   } catch (err: any) {
     const durationMs = Math.round(performance.now() - t0);
 
-    // Validation error
+    // ---- Zod validation error → 400 ----
     if (err?.issues) {
       const details = err.issues.map((i: any) => ({
         path: i.path?.join(".") || "",
         message: i.message,
       }));
-      
+
       jlog({
         ts: new Date().toISOString(),
         level: "warn",
-        requestId,
+        reqId,
         route,
         method: "POST",
+        phase: "validation_failed",
         status: 400,
         durationMs,
         errorCode: "VALIDATION_ERROR",
         validationErrors: details,
       });
-      
+
       return res.status(400).json({
         error: "Bad Request",
         code: "VALIDATION_ERROR",
         details,
-        requestId,
+        reqId,
       });
     }
 
-    // Screenshot provider failure - return 502
-    const msg = (err && err.message) ? err.message : "unknown";
-    const isScreenshotFail = /SCREENSHOT_PROVIDER_FAILED/i.test(msg) || /tiny_png/i.test(msg);
+    // ---- Screenshot/provider failure → 502; else 500 ----
+    const msg = err && err.message ? String(err.message) : "unknown";
+    const isScreenshotFail =
+      /SCREENSHOT_PROVIDER_FAILED/i.test(msg) || /tiny_png/i.test(msg);
 
     const status = isScreenshotFail ? 502 : 500;
-    const errorCode = isScreenshotFail ? "SCREENSHOT_FAILED" : "HEATMAP_DATA_FAILED";
+    const code = isScreenshotFail ? "SCREENSHOT_FAILED" : "HEATMAP_DATA_FAILED";
 
     jlog({
       ts: new Date().toISOString(),
       level: "error",
-      requestId,
+      reqId,
       route,
       method: "POST",
+      phase: "error",
       status,
       durationMs,
-      errorCode,
+      errorCode: code,
       errorMessage: msg,
     });
-    
+
     return res.status(status).json({
-      error: isScreenshotFail ? "screenshot_failed" : "Failed to generate data heatmap",
-      code: errorCode,
+      error: isScreenshotFail
+        ? "screenshot_failed"
+        : "Failed to generate data heatmap",
+      code,
       details: msg,
-      requestId
+      reqId,
     });
   }
 }

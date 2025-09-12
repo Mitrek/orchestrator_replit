@@ -4,7 +4,6 @@ import { nanoid } from "nanoid";
 import { performance } from "node:perf_hooks";
 import { heatmapDataRequestSchema } from "../schemas/heatmap";
 import { getExternalScreenshotBase64 } from "../services/screenshotExternal";
-import { getScreenshotBuffer } from "../services/screenshot";
 import { 
   getImageDimensions, 
   mapNormalizedPointsToPixels, 
@@ -63,49 +62,19 @@ export async function postHeatmapData(req: Request, res: Response) {
       blurPx
     });
 
-    // Get screenshot with fallback logic (same as AI path)
-    let screenshotBase64: string;
-    let screenshotProvider: string;
-    
+    // Get screenshot
+    let screenshotResult;
     try {
-      // Primary: try getScreenshotBuffer() (has retry logic and external providers)
-      try {
-        const { png } = await getScreenshotBuffer(url, device);
-        screenshotBase64 = `data:image/png;base64,${png.toString("base64")}`;
-        screenshotProvider = "primary";
-        
-        jlog({
-          ts: new Date().toISOString(),
-          level: "info",
-          requestId,
-          route,
-          phase: "screenshot_ok",
-          provider: "primary"
-        });
-      } catch (primaryErr: any) {
-        jlog({
-          ts: new Date().toISOString(),
-          level: "warn",
-          requestId,
-          route,
-          phase: "primary_screenshot_failed",
-          errorMessage: primaryErr?.message
-        });
-        
-        // Fallback: try external providers directly
-        const screenshotResult = await getExternalScreenshotBase64(url, device);
-        screenshotBase64 = screenshotResult.image;
-        screenshotProvider = screenshotResult.provider;
-        
-        jlog({
-          ts: new Date().toISOString(),
-          level: "info",
-          requestId,
-          route,
-          phase: "screenshot_ok",
-          provider: screenshotProvider
-        });
-      }
+      screenshotResult = await getExternalScreenshotBase64(url, device);
+
+      jlog({
+        ts: new Date().toISOString(),
+        level: "info",
+        requestId,
+        route,
+        phase: "screenshot_ok",
+        provider: screenshotResult.provider
+      });
     } catch (err: any) {
       const durationMs = Math.round(performance.now() - t0);
       
@@ -131,7 +100,7 @@ export async function postHeatmapData(req: Request, res: Response) {
     // Extract image dimensions
     let width: number, height: number;
     try {
-      const dimensions = await getImageDimensions(screenshotBase64);
+      const dimensions = await getImageDimensions(screenshotResult.image);
       width = dimensions.width;
       height = dimensions.height;
     } catch (err: any) {
@@ -273,7 +242,7 @@ export async function postHeatmapData(req: Request, res: Response) {
     const tComposite = performance.now();
     try {
       finalImage = await compositeHeatOverScreenshot({
-        screenshotPngBase64: screenshotBase64,
+        screenshotPngBase64: screenshotResult.image,
         heatRgba,
         width,
         height,
@@ -336,7 +305,7 @@ export async function postHeatmapData(req: Request, res: Response) {
       },
       width,
       height,
-      provider: screenshotProvider
+      provider: screenshotResult.provider
     });
 
     // Prepare sample of mapped points (first 5)

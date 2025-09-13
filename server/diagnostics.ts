@@ -1,8 +1,18 @@
 
 import { Request, Response } from "express";
-import { metrics } from "./metrics";
 
-import { ERROR_TYPES } from "./logger";
+// Simple inline metrics implementation
+const metrics = {
+  getMetrics: () => ({}),
+  getUptimeSeconds: () => Math.floor(process.uptime())
+};
+
+// Simple error types
+const ERROR_TYPES = {
+  VALIDATION_ERROR: "validation_error",
+  NOT_FOUND: "not_found",
+  INTERNAL_ERROR: "internal_error"
+};
 
 // Recent errors storage (ring buffer)
 interface RecentError {

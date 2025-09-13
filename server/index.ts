@@ -7,7 +7,6 @@ import { setupVite, serveStatic, log } from "./vite";
 import { neonConfig } from "@neondatabase/serverless";
 import path from "path";
 import { fileURLToPath } from "url";
-import { buildHealthReport } from "./health"; // <-- added
 import fs from "fs";
 
 // Hard block any WS usage if some file tries to set it up later
@@ -27,8 +26,12 @@ app.use(express.static(path.join(process.cwd(), "public")));
 
 // ✅ /health route — lightweight readiness check
 app.get("/health", (req, res) => {
-  const payload = buildHealthReport();
-  res.status(200).json(payload);
+  res.status(200).json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    version: process.env.npm_package_version || "1.0.0"
+  });
 });
 
 // Request timing + compact API response logger

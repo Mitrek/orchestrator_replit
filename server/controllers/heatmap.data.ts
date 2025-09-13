@@ -2,7 +2,6 @@
 import type { Request, Response } from "express";
 import { nanoid } from "nanoid";
 import { performance } from "node:perf_hooks";
-import { heatmapDataRequestSchema } from "../schemas/heatmap";
 import { generateDataHeatmap } from "../services/heatmap";
 
 function jlog(o: Record<string, unknown>) {
@@ -17,30 +16,25 @@ function jlog(o: Record<string, unknown>) {
 
 export async function postHeatmapData(req: Request, res: Response) {
   const t0 = performance.now();
-  const reqId = nanoid();
   const route = "/api/v1/heatmap/data";
-
-  // Add reqId to locals so downstream middleware can also use it (if any)
+  const reqId = (res.locals as any).reqId || nanoid();
   (res.locals as any).reqId = reqId;
 
+  const { url, device = "desktop", dataPoints } = req.body ?? {};
+
+  jlog({
+    ts: new Date().toISOString(),
+    level: "info",
+    reqId,
+    route,
+    method: "POST",
+    phase: "start",
+    device,
+    sourceUrl: url,
+    pointCount: Array.isArray(dataPoints) ? dataPoints.length : 0,
+  });
+
   try {
-    // ---- 1) Validate input (Zod) ----
-    const parsed = heatmapDataRequestSchema.parse(req.body);
-    const { url, device = "desktop", dataPoints } = parsed;
-
-    jlog({
-      ts: new Date().toISOString(),
-      level: "info",
-      reqId,
-      route,
-      method: "POST",
-      phase: "start",
-      device,
-      sourceUrl: url,
-      pointCount: Array.isArray(dataPoints) ? dataPoints.length : 0,
-    });
-
-    // ---- 2) Delegate to service (does screenshot + composite) ----
     const resp = await generateDataHeatmap({
       url,
       device,
@@ -66,9 +60,7 @@ export async function postHeatmapData(req: Request, res: Response) {
       pointCount: Array.isArray(dataPoints) ? dataPoints.length : 0,
     });
 
-    // Echo reqId in the response meta for easier tracing
     const meta = { ...resp.meta, reqId };
-
     return res.status(200).json({
       base64: resp.base64,
       meta,
@@ -76,35 +68,6 @@ export async function postHeatmapData(req: Request, res: Response) {
   } catch (err: any) {
     const durationMs = Math.round(performance.now() - t0);
 
-    // ---- Zod validation error → 400 ----
-    if (err?.issues) {
-      const details = err.issues.map((i: any) => ({
-        path: i.path?.join(".") || "",
-        message: i.message,
-      }));
-
-      jlog({
-        ts: new Date().toISOString(),
-        level: "warn",
-        reqId,
-        route,
-        method: "POST",
-        phase: "validation_failed",
-        status: 400,
-        durationMs,
-        errorCode: "VALIDATION_ERROR",
-        validationErrors: details,
-      });
-
-      return res.status(400).json({
-        error: "Bad Request",
-        code: "VALIDATION_ERROR",
-        details,
-        reqId,
-      });
-    }
-
-    // ---- Screenshot/provider failure → 502; else 500 ----
     const msg = err && err.message ? String(err.message) : "unknown";
     const isScreenshotFail =
       /SCREENSHOT_PROVIDER_FAILED/i.test(msg) || /tiny_png/i.test(msg);

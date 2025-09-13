@@ -1,8 +1,25 @@
 
 import { Request, Response, NextFunction } from "express";
-import { generateRequestId, logRequest } from "../logger";
-import { metrics } from "../metrics";
 import { addRecentError } from "../diagnostics";
+
+// Simple inline logger functions
+function generateRequestId(): string {
+  return Math.random().toString(36).substring(2, 15);
+}
+
+function logRequest(data: any): void {
+  console.log(JSON.stringify(data));
+}
+
+// Simple inline metrics
+const metrics = {
+  incrementCounter: (route: string, type: string) => {
+    // Minimal metrics - could be expanded later
+  },
+  recordDuration: (route: string, duration: number) => {
+    // Minimal metrics - could be expanded later
+  }
+};
 
 // Extend Express Request type
 declare global {

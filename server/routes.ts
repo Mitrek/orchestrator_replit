@@ -23,6 +23,11 @@ import { db, withDbRetry } from "./db";
 import { eq } from "drizzle-orm";
 
 import { perIpLimiter, requestTimeout } from "./middleware/limits";
+import {
+  heatmapRequestSchema,
+  heatmapDataRequestSchema,
+} from "./schemas/heatmap";
+import { postHeatmapData } from "./controllers/heatmap.data";
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 
@@ -70,15 +75,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     async (req, res) => {
       const reqId = res.locals?.reqId || `hmAI_${Date.now()}`;
       try {
-        const { url, device = "desktop" } = req.body;
-        
-        if (!url || typeof url !== 'string') {
-          return res.status(400).json({ error: "URL is required" });
+        const parsed = heatmapRequestSchema.safeParse(req.body);
+        if (!parsed.success) {
+          const details = parsed.error.issues.map((i) => ({
+            path: i.path.join('.'),
+            message: i.message,
+          }));
+          return res.status(400).json({
+            error: "Bad Request",
+            code: "VALIDATION_ERROR",
+            details,
+            reqId,
+          });
         }
+
+        const { url, device = "desktop" } = parsed.data;
 
         const { generateHeatmap } = await import("./services/heatmap");
         const result = await generateHeatmap({ url, device, reqId });
-        
+
         return res.json(result);
       } catch (error: any) {
         console.error('[/api/v1/heatmap] error:', error?.stack || error);
@@ -98,36 +113,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
     perIpLimiter,
     requestTimeout(45_000),
     async (req, res) => {
-      const reqId = res.locals?.reqId || `hmData_${Date.now()}`;
+      const reqId = res.locals?.reqId || `hmDATA_${Date.now()}`;
       try {
-        const { url, device, dataPoints } = req.body;
-        
-        if (!url || typeof url !== 'string') {
-          return res.status(400).json({ error: "URL is required" });
+        const parsed = heatmapDataRequestSchema.safeParse(req.body);
+        if (!parsed.success) {
+          const details = parsed.error.issues.map((i) => ({
+            path: i.path.join('.'),
+            message: i.message,
+          }));
+          return res.status(400).json({
+            error: "Bad Request",
+            code: "VALIDATION_ERROR",
+            details,
+            reqId,
+          });
         }
 
-        if (!Array.isArray(dataPoints) || dataPoints.length === 0) {
-          return res.status(400).json({ error: "dataPoints[] required" });
+        const { url, device = "desktop", jsonl } = parsed.data;
+
+        let dataPoints: any[] = [];
+        try {
+          dataPoints = jsonl
+            .split("\n")
+            .map((l) => l.trim())
+            .filter(Boolean)
+            .map((line) => JSON.parse(line));
+        } catch {
+          const details = [{ path: "jsonl", message: "Invalid JSONL format" }];
+          return res.status(400).json({
+            error: "Bad Request",
+            code: "INVALID_JSONL",
+            details,
+            reqId,
+          });
         }
 
-        const { generateDataHeatmap } = await import("./services/heatmap");
-        const result = await generateDataHeatmap({ url, device, dataPoints, reqId });
-        
-        return res.json(result);
+        req.body = { url, device, dataPoints };
+        (res.locals as any).reqId = reqId;
+        return postHeatmapData(req, res);
       } catch (error: any) {
         console.error('[/api/v1/heatmap/data] error:', error?.stack || error);
-        return res.status(500).json({ 
-          error: "Failed to generate heatmap", 
+        return res.status(500).json({
+          error: "INTERNAL_ERROR",
           details: error?.message,
-          reqId 
+          reqId,
         });
       }
     }
   );
-
-
-
-
 
   // ------------------------- User/Profile (JWT) ------------------------------
   app.get("/api/user/profile", authenticateToken, async (req: any, res) => {

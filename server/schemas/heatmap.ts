@@ -1,48 +1,60 @@
 
 // FILE: server/schemas/heatmap.ts
+import { isIP } from "node:net";
 import { z } from "zod";
+
+function isSafeUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    if (!["http:", "https:"].includes(parsed.protocol)) return false;
+
+    const host = parsed.hostname;
+    if (host === "localhost" || host === "127.0.0.1" || host === "::1")
+      return false;
+
+    if (isIP(host) === 4) {
+      const [a, b] = host.split(".").map(Number);
+      if (a === 10) return false;
+      if (a === 172 && b >= 16 && b <= 31) return false;
+      if (a === 192 && b === 168) return false;
+      if (a === 127) return false;
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Common fields used by both endpoints.
  */
 export const baseHeatmapSchema = z.object({
- url: z.string().url("Must be a valid URL starting with http:// or https://"),
- device: z.enum(["desktop", "tablet", "mobile"]).optional().default("desktop"),
+  url: z
+    .string()
+    .url("Must be a valid URL starting with http:// or https://")
+    .max(2048, "URL must be at most 2048 characters")
+    .refine(
+      (u) => isSafeUrl(u),
+      "URL must use http/https and not point to localhost or private IPs"
+    ),
+  device: z.enum(["desktop", "tablet", "mobile"]).optional().default("desktop"),
 });
 
 /**
  * Schema for /api/v1/heatmap (AI-assisted).
- * Simplified to base64-only response.
+ * Accepts an optional knobs object for future tuning.
  */
-export const heatmapRequestSchema = z.object({
-  url: z.string().url("Invalid URL format"),
-  device: z.enum(["desktop", "tablet", "mobile"]).optional().default("desktop")
+export const heatmapRequestSchema = baseHeatmapSchema.extend({
+  knobs: z.record(z.any()).optional(),
 });
 
 /**
  * Schema for /api/v1/heatmap/data (data-driven).
- * Extends the base schema with dataPoints[].
+ * Uses jsonl string payload instead of array of points.
  */
 export const heatmapDataRequestSchema = baseHeatmapSchema.extend({
- dataPoints: z
-    .array(
-      z.object({
-        x: z.number().min(0, "x must be >= 0").max(1, "x must be <= 1"),
-        y: z.number().min(0, "y must be >= 0").max(1, "y must be <= 1"),
-        type: z.enum(["move", "click"]).optional(),
-      }),
-    )
-    .min(1, "At least one dataPoint is required")
-    .max(5000, "Too many dataPoints"),
- // Step-2 knobs
- alpha: z.number().optional(),
- radiusPx: z.number().optional(),
- blurPx: z.number().optional(),
- // Step-3 knobs
- blendMode: z.enum(["lighter", "source-over"]).optional().default("lighter"),
- ramp: z.enum(["classic", "soft"]).optional().default("classic"),
- clipLowPercent: z.number().optional().default(0),
- clipHighPercent: z.number().optional().default(100),
+  jsonl: z.string().min(1, "jsonl string is required"),
 });
 
 // Inferred TypeScript types (optional but recommended)

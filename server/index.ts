@@ -2,8 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 
-// Keep only the ping route here; all other APIs are registered in routes.ts
-import { registerPingRoute } from "./routes/ping";
+// All APIs are registered in routes.ts
 // server/index.ts (very top – first imports)
 import { neonConfig } from "@neondatabase/serverless";
 import path from "path";
@@ -64,8 +63,7 @@ app.use((req, res, next) => {
 (async () => {
   const server = await registerRoutes(app);
 
-  // Health check stays close to the entrypoint
-  registerPingRoute(app);
+  // Health check is handled in routes.ts
 
   // ✅ Safer centralized error handler: log & respond, don't crash the process
   app.use((err: any, req: Request, res: Response, next: NextFunction) => {

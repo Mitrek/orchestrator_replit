@@ -1,4 +1,4 @@
-import { createCanvas, Image } from "@napi-rs/canvas";
+import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { getExternalScreenshotBase64 } from "./screenshotExternal";
 import { getScreenshotBuffer } from "./screenshot";
 
@@ -104,19 +104,18 @@ function generateAIHotspots(viewport: { width: number; height: number }): Array<
  * Rendering
  * ------------------------- */
 
-function renderHeatmapToCanvas(
+async function renderHeatmapToCanvas(
   screenshotBase64: string,
   hotspots: Array<{ x: number; y: number; intensity: number }>,
   viewport: { width: number; height: number }
-): string {
+): Promise<string> {
   const canvas = createCanvas(viewport.width, viewport.height);
   const ctx = canvas.getContext("2d");
 
   // Decode screenshot
-  const img = new Image();
   const imageData = screenshotBase64.replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, "");
   const buf = Buffer.from(imageData, "base64");
-  img.src = buf;
+  const img = await loadImage(buf);
 
   // Draw screenshot
   ctx.drawImage(img, 0, 0, viewport.width, viewport.height);
@@ -145,19 +144,18 @@ function renderHeatmapToCanvas(
   return `data:image/png;base64,${out.toString("base64")}`;
 }
 
-function renderDataHeatmapToCanvas(
+async function renderDataHeatmapToCanvas(
   screenshotBase64: string,
   dataPoints: Array<{ x: number; y: number; type?: "click" | "move" }>,
   viewport: { width: number; height: number }
-): string {
+): Promise<string> {
   const canvas = createCanvas(viewport.width, viewport.height);
   const ctx = canvas.getContext("2d");
 
   // Decode screenshot
-  const img = new Image();
   const imageData = screenshotBase64.replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, "");
   const buf = Buffer.from(imageData, "base64");
-  img.src = buf;
+  const img = await loadImage(buf);
 
   // Draw screenshot
   ctx.drawImage(img, 0, 0, viewport.width, viewport.height);
@@ -256,7 +254,7 @@ export async function generateHeatmap(params: HeatmapArgs): Promise<HeatmapRespo
     const hotspots = generateAIHotspots(viewport);
 
     // Composite
-    const base64 = renderHeatmapToCanvas(shot.base64, hotspots, viewport);
+    const base64 = await renderHeatmapToCanvas(shot.base64, hotspots, viewport);
 
     const durationMs = Date.now() - t0;
 
@@ -326,7 +324,7 @@ export async function generateDataHeatmap(params: DataHeatmapArgs): Promise<Heat
     viewport = shot.viewport;
 
     // Composite
-    const base64 = renderDataHeatmapToCanvas(shot.base64, dataPoints, viewport);
+    const base64 = await renderDataHeatmapToCanvas(shot.base64, dataPoints, viewport);
 
     const durationMs = Date.now() - t0;
 

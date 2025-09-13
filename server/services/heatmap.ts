@@ -32,6 +32,7 @@ interface HeatmapResponse {
     durationMs: number;
     timestamp: string;
     phase: "phase10";
+    reqId?: string;
   };
 }
 

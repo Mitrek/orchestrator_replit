@@ -118,7 +118,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error('[/api/v1/heatmap/data] error:', error?.stack || error);
         return res.status(500).json({ 
           error: "Failed to generate heatmap", 
-          details: error?.message 
+          details: error?.message,
+          reqId 
         });
       }
     }

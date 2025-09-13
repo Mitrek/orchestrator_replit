@@ -9,6 +9,7 @@ type Device = "desktop" | "tablet" | "mobile";
 interface HeatmapArgs {
   url: string;
   device?: Device;
+  reqId?: string;
 }
 
 /** Data heatmap args (client-provided normalized points) */
@@ -278,6 +279,7 @@ export async function generateHeatmap(params: HeatmapArgs): Promise<HeatmapRespo
         sourceUrl: params.url,
         durationMs,
         timestamp: new Date().toISOString(),
+        reqId: params.reqId,
       },
     };
   } catch (error: any) {
@@ -348,6 +350,7 @@ export async function generateDataHeatmap(params: DataHeatmapArgs): Promise<Heat
         sourceUrl: params.url,
         durationMs,
         timestamp: new Date().toISOString(),
+        reqId: params.reqId,
       },
     };
   } catch (error: any) {

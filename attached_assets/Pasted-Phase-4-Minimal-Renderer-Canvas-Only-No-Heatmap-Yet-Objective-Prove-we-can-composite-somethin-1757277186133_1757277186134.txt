@@ -1,0 +1,113 @@
+Phase 4 — Minimal Renderer (Canvas Only, No Heatmap Yet)
+
+Objective: Prove we can composite something on top of the screenshot.
+Tasks:
+
+Load the screenshot and draw a simple transparent overlay rectangle at a fixed position.
+
+Export the composited image to public/heatmaps.
+DoD:
+
+Output file exists and visually shows the overlay.
+
+Route returns the URL or base64 of that exact file.
+
+0) One-time prep
+
+Dependency choice: We’ll use @napi-rs/canvas (fast, prebuilt binaries).
+
+Add it to your dependencies.
+
+Static folder: You already have public/heatmaps/. Keep it.
+
+Tip: From now on, use only @napi-rs/canvas (do not mix with canvas).
+
+1) Add a minimal imaging pipeline
+
+Where: server/services/imaging.ts
+What to add (conceptually, not code):
+
+A function overlayRectangleOnBase64Png(inputBase64, opts) that:
+
+Decodes the data:image/png;base64,... into a buffer.
+
+Loads it into a Canvas image (loadImage from @napi-rs/canvas).
+
+Creates a canvas with the same width/height as the screenshot.
+
+Draws the screenshot onto the canvas at (0,0).
+
+Sets globalAlpha to something like 0.25 ~ 0.4.
+
+Draws one filled rectangle at a fixed pixel position, e.g.:
+
+x = 100, y = 100, w = 300, h = 180 (any visible box)
+
+Fill (semi-transparent) and optionally a stroke with lower alpha so it’s obvious.
+
+Exports the result to a PNG buffer and also base64 data URL.
+
+A small writer function writePngToPublicHeatmaps(buffer) that:
+
+Ensures public/heatmaps exists (create if missing).
+
+Generates a filename like heatmap-<timestamp>-<nanoid>.png.
+
+Saves the buffer there and returns { filename, path, urlPath: '/heatmaps/...' }.
+
+Return shape from overlayRectangleOnBase64Png should be something like:
+
+{ base64: 'data:image/png;base64,...', width, height }
+
+This makes the controller logic trivial.
+
+Test for this step alone:
+
+Temporarily feed a known small PNG base64 into overlayRectangleOnBase64Png and confirm it returns base64 with a visible rectangle (you can paste into a browser data: URL to eyeball it).
+
+Call writePngToPublicHeatmaps() with that buffer and confirm the file appears.
+
+2) Wire controller to call screenshot → overlay → write
+
+Where: server/controllers/heatmap.ts (handler for /api/v1/heatmap)
+What to do:
+
+In the main screenshot endpoint (the one currently stubbed):
+
+Validate the incoming JSON (you already have zod schemas). At minimum accept:
+
+url (required)
+
+device (optional: "desktop"|"tablet"|"mobile", default "desktop")
+
+returnMode (optional: "base64"|"url", default "base64")
+
+Call screenshotToBase64({ url, device, fullPage: false }) from server/services/screenshot.ts. It returns a data:image/png;base64,....
+
+Call overlayRectangleOnBase64Png(screenshotBase64, { x:100, y:100, w:300, h:180, alpha:0.35 }) from server/services/imaging.ts.
+
+If returnMode === "url":
+
+Write the composited PNG to public/heatmaps with your writer.
+
+Respond with { url: "/heatmaps/<file>", meta: { sourceUrl, device }, requestId }.
+
+Ensure that exact file exists on disk.
+
+Else (default "base64"):
+
+Return { base64: "data:image/png;base64,...", meta: { sourceUrl, device }, requestId }.
+
+Keep your nice logging (you already have requestId, durations, etc.).
+
+Make sure errors are categorized: LAUNCH_FAILED, NAVIGATION_FAILED, SCREENSHOT_FAILED, RENDER_FAILED.
+
+DoD check for this controller wiring:
+
+Make a request, see logs: “screenshot OK”, “overlay OK”, “write OK”.
+
+Response contains either url or base64 and a meta object.
+
+3) Expose a single, predictable test route
+
+You already register /api/v1/heatmap in server/routes.ts with your controller. No changes to routing are needed apart from switching from a stub to the real logic above.

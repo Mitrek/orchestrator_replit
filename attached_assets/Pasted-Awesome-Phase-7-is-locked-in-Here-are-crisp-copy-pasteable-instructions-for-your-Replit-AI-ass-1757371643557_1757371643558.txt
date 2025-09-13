@@ -1,0 +1,312 @@
+Awesome—Phase 7 is locked in. Here are **crisp, copy-pasteable instructions** for your Replit AI assistant to implement **Phase 8: Monitoring, Observability & QA**. This is written to be unambiguous, implementation-ready, and **testable after each sub-step**. No actual code included—just exact tasks, files, and acceptance checks.
+
+---
+
+# Phase 8 — Monitoring, Observability & QA (Implementation Brief)
+
+## Ground rules
+
+* Keep all current API contracts intact (Phase 6/7 envelopes; base64 by default).
+* No Chromium; provider-only screenshots remain.
+* All logs **one line JSON**; **no multi-line** except explicit dev diagnostics.
+* Never log secrets or full base64 payloads. Redact aggressively.
+
+---
+
+## A. Structured Logging & Request Tracing
+
+**Files to touch:**
+
+* `server/index.ts` (or the main Express bootstrap)
+* `server/app-routes.ts` (route layer)
+* (If you already centralized logging) `server/vite.ts` or `server/logger.ts`
+
+**Tasks**
+
+1. **Request ID middleware**
+
+   * Generate short, collision-safe `reqId` per request (e.g., nanoid or crypto).
+   * Attach to `req` and include it in **all** log lines and responses (`meta.reqId`).
+
+2. **Timing middleware**
+
+   * Capture `t0` on request start; compute `durationMs` on response finish.
+   * Log a single **request summary** line on completion.
+
+3. **Unified log schema** (one JSON line per event):
+
+   * Required fields:
+     `ts, level, phase:"phase8", route, method, status, reqId, url, device, engine, durationMs, cached, errCode, errType`
+   * Redactions: never log `apiKey`, `base64`, secrets, or full prompt text.
+
+4. **Error taxonomy**
+
+   * Map known failures to stable `errType` & `errCode`, e.g.:
+
+     * `NAVIGATION_TIMEOUT` (408-ish)
+     * `PROVIDER_UNAVAILABLE`
+     * `AI_JSON_INVALID`
+     * `AI_TIMEOUT`
+     * `BAD_INPUT`
+     * `RENDER_FAILED`
+     * fallback: `UNKNOWN`
+   * Ensure `errType` is present in error logs and bubbled into response `meta.error`.
+
+**Acceptance (tick all)**
+
+* [ ] Every request emits exactly one summary log line.
+* [ ] `reqId` appears in logs **and** in JSON responses (`meta.reqId`).
+* [ ] An invalid input returns 400 with `meta.error.errType="BAD_INPUT"`.
+* [ ] No payload base64 or secrets appear in logs.
+
+---
+
+## B. In-Memory Metrics (No external stack)
+
+**Files to touch:**
+
+* `server/app-routes.ts`
+* `server/services/*` (where you can increment counters)
+* `server/metrics.ts` (new helper module)
+
+**Tasks**
+
+1. **Counters**
+
+   * Increment per route: `ok`, `error`, `badRequest`, `timeout`, `cacheHit`, `cacheMiss`.
+   * Maintain rolling totals since process start.
+
+2. **Latency histograms**
+
+   * Track duration buckets per route (e.g., `<250ms, <500ms, <1s, <2s, ≥2s`).
+   * Keep counts per bucket.
+
+3. **Percentiles (simple)**
+
+   * Keep a ring buffer of last N durations per route (e.g., N=200).
+   * Compute P50/P90/P95/P99 on demand.
+
+4. **Cache stats**
+
+   * Expose current `entries`, `hitRatio` (hits/(hits+misses)), and `avgAgeMs` (if tracked).
+
+**Acceptance**
+
+* [ ] Internal counters increment as expected under mixed success/failure calls.
+* [ ] On demand (see Diagnostics below), P50/P90/P95/P99 are computed and returned.
+* [ ] `cacheHit` increases on repeated calls with same `{url,device,...}`.
+
+---
+
+## C. Diagnostics Endpoint
+
+**Files to touch:**
+
+* `server/app-routes.ts` (add new route)
+* `server/services/screenshot.ts` (expose provider health ping if available)
+* `server/metrics.ts` (readouts)
+
+**Tasks**
+
+1. **`GET /api/v1/heatmap/diagnostics`**
+
+   * Returns **JSON** only; no images.
+   * Payload spec (exact keys):
+
+```json
+{
+  "phase": "phase8",
+  "uptimeSec": 0,
+  "timestamp": "ISO-8601",
+  "version": "x.y.z",
+  "featureFlags": {
+    "heatmapEnabled": true,
+    "aiHotspotsEnabled": true
+  },
+  "env": {
+    "node": "vXX",
+    "openaiConfigured": true,
+    "provider": "thumio|screenshotmachine",
+    "providerConfigured": true
+  },
+  "metrics": {
+    "routes": {
+      "/api/v1/heatmap": {
+        "counters": { "ok": 0, "error": 0, "badRequest": 0, "timeout": 0, "cacheHit": 0, "cacheMiss": 0 },
+        "latency": { "p50": 0, "p90": 0, "p95": 0, "p99": 0, "buckets": { "<250": 0, "<500": 0, "<1000": 0, "<2000": 0, ">=2000": 0 } }
+      },
+      "/api/v1/heatmap/data": { /* same shape */ },
+      "/api/v1/heatmap/hotspots": { /* same shape */ }
+    },
+    "cache": { "entries": 0, "hitRatio": 0.0, "avgAgeMs": 0 }
+  },
+  "providers": {
+    "screenshot": {
+      "active": true,
+      "lastError": null
+    },
+    "ai": {
+      "active": true,
+      "lastError": null,
+      "lastModel": "gpt-4o-mini"
+    }
+  },
+  "recentErrors": [
+    { "ts": "ISO-8601", "route": "...", "errType": "...", "errCode": "...", "message": "short message", "reqId": "..." }
+  ]
+}
+```
+
+2. **Provider sanity**
+
+   * Implement a **lightweight** “can I reach provider” check (e.g., HEAD to a status URL or simulated success path). If not possible, set `"active": false` and put a short reason in `lastError`.
+
+3. **Redactions**
+
+   * No secrets, tokens, or domains you don’t want to reveal. OK to show provider name.
+
+**Acceptance**
+
+* [ ] Hitting `/api/v1/heatmap/diagnostics` returns 200 with the **exact** keys above (values filled appropriately).
+* [ ] Under load tests, counters and percentiles change plausibly.
+* [ ] If OpenAI is disabled/missing, `env.openaiConfigured=false` and `providers.ai.active=false` with a helpful `lastError`.
+
+---
+
+## D. Golden-Image QA (Stability checks without heavy deps)
+
+**Files to touch:**
+
+* `server/qa.ts` (new helper)
+* `server/services/renderer.ts` (expose “render deterministic test frame”)
+* `public/qa/` (optional: store golden PNGs)
+
+**Tasks**
+
+1. **Deterministic test vector**
+
+   * Add a “golden” test harness that renders a **fixed** URL and a **fixed** point set (or AI hotspots disabled) for each device.
+   * Ensure all randomness is disabled (fixed seeds, fixed alpha/ramp).
+
+2. **Simple image quality metric**
+
+   * Compute **MSE/PSNR** between current render and a stored golden image (no new heavy dependencies; you can do this with `@napi-rs/canvas` pixel data).
+   * Thresholds: e.g., PSNR ≥ 35 dB considered “pass”.
+
+3. **Diagnostics hook**
+
+   * Add optional query to `/api/v1/heatmap/diagnostics?qa=1` that runs the golden test (once per call) and reports:
+
+     * `{ device: "...", psnr: 42.3, pass: true }` for each device.
+
+**Acceptance**
+
+* [ ] Running diagnostics with `qa=1` returns PSNR scores and `pass=true` for all devices with golden images present.
+* [ ] If goldens are missing, show `"pass": false, "reason": "missing_golden"` without 500s.
+
+---
+
+## E. Sample Rate Logging & Payload Budget
+
+**Files to touch:**
+
+* `server/app-routes.ts` (logging sites)
+* `server/logger.ts` (if present)
+
+**Tasks**
+
+1. **Sampling**
+
+   * For successful requests, fully log **1 in N** (e.g., N=10). Always fully log errors.
+   * The summary line (with duration) still emits for all.
+
+2. **Payload budget**
+
+   * Clamp `meta` sizes; truncate long `url` (e.g., max 200 chars) in logs (response can keep full).
+   * Never echo `dataPoints` arrays in logs; include only counts.
+
+**Acceptance**
+
+* [ ] Under a burst, logs remain concise; error lines always detailed.
+* [ ] Large inputs do not explode log sizes.
+
+---
+
+## F. Developer Harness – Diagnostics Page (Optional but recommended)
+
+**Files to touch:**
+
+* `client/src/pages/DevDiagnostics.tsx` (or similar)
+* `client` router to expose `/dev/diagnostics`
+
+**Tasks**
+
+* A thin page that:
+
+  * Calls `/api/v1/heatmap/diagnostics` and renders JSON prettily.
+  * Has a button “Run Golden QA” → calls `?qa=1` → shows PSNR per device.
+  * Shows live counters and cache stats.
+
+**Acceptance**
+
+* [ ] Page loads locally; changing traffic updates counters after refresh.
+* [ ] QA button reports PSNR and pass/fail clearly.
+
+---
+
+## G. Smoke Tests (manual)
+
+**Happy path**
+
+```bash
+# AI heatmap
+curl -s -X POST http://localhost:3000/api/v1/heatmap \
+  -H "Content-Type: application/json" \
+  -d '{ "url":"https://www.acquisition.com", "device":"desktop" }' | jq '.meta.phase, .meta.device, .base64|length'
+```
+
+Expect: `"phase7" | "desktop" | > 10_000`
+
+**Data path**
+
+```bash
+curl -s -X POST http://localhost:3000/api/v1/heatmap/data \
+  -H "Content-Type: application/json" \
+  -d '{ "url":"https://example.com", "device":"mobile", "dataPoints":[{"x":0.5,"y":0.2},{"x":0.6,"y":0.25}] }' | jq '.meta.device, .base64|length'
+```
+
+**Diagnostics**
+
+```bash
+curl -s http://localhost:3000/api/v1/heatmap/diagnostics | jq '.phase, .metrics.routes["/api/v1/heatmap"].counters'
+curl -s "http://localhost:3000/api/v1/heatmap/diagnostics?qa=1" | jq '.providers, .metrics, .qa'
+```
+
+Expect: `phase8`, changing counters, and QA results if configured.
+
+**Logging check**
+
+* Verify one summary line per request; error requests contain `errType`.
+
+---
+
+## H. Rollback & Safety
+
+* All Phase 8 changes are **additive**. If something goes wrong, you can:
+
+  1. Disable diagnostics route via feature flag.
+  2. Turn off AI hotspots via feature flag (Phase 7 fallback already exists).
+  3. Reduce log sample rate to near zero in production.
+
+---
+
+### Done Criteria for Phase 8
+
+* `/api/v1/heatmap/diagnostics` returns the specified JSON with counters, percentiles, cache stats, and provider/AI health.
+* Every request has a `reqId` echoed in the response meta and logs.
+* Logs are one-line JSON, redacted, and sampled.
+* Optional QA (`?qa=1`) reports PSNR per device and pass/fail without flakiness.
+
+---
+
+When you’re ready, paste any **one** subsection (e.g., “A. Structured Logging & Request Tracing”) back here and I’ll break it down into micro-steps with exact function signatures and test commands.

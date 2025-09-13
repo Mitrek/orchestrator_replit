@@ -1,0 +1,181 @@
+Perfect — here’s a **copy-pasteable fix brief** you can hand to your AI assistant to implement. It’s surgical (one service + one controller), keeps your current interfaces, and makes the **data** route use the **same robust screenshot path** as the AI route (with a safe fallback). It also **fails fast** instead of returning a black/dummy background.
+
+---
+
+# 🔧 Fix brief — “Data path must composite over a real screenshot (like AI path)”
+
+## ✅ Goal
+
+Make `POST /api/v1/heatmap/data` **always** composite the heat overlay on top of a **real page screenshot** (Puppeteer path), falling back to external providers only if needed. If no real screenshot can be obtained, **return 502** (don’t return a black image).
+
+---
+
+## 1) Patch `server/services/heatmap.ts`
+
+> **What to change:** Inside the function that powers `/api/v1/heatmap/data` (often `generateDataHeatmap`), use `getScreenshotBuffer(...)` first (same helper used on the AI path), then fall back to `getExternalScreenshotBase64(...)`. Sanity-check the image size before rendering.
+
+**Find** (or similar):
+
+```ts
+// current simplified flow (problematic):
+import { getExternalScreenshotBase64 } from "./screenshotExternal";
+// ...
+export async function generateDataHeatmap(params: DataHeatmapArgs) {
+  // ...
+  const { image } = await getExternalScreenshotBase64(params.url, device);
+  // image may be 1x1 dummy; then you render heat on black
+  const base64 = renderDataHeatmapToCanvas(image, dataPoints, viewport);
+  return { base64, meta: { engine: "data", ... } };
+}
+```
+
+**Replace with** (drop-in):
+
+```ts
+// ✅ Robust flow: try Puppeteer screenshot first, fallback to external
+import { getScreenshotBuffer } from "./screenshot";          // ⬅️ add this
+import { getExternalScreenshotBase64 } from "./screenshotExternal";
+// (keep your other imports: canvas, types, validators, etc.)
+
+// Minimum sane PNG payload (~1.2 KB) to rule out 1x1 dummies
+const MIN_PNG_BYTES = 1200;
+
+export async function generateDataHeatmap(params: DataHeatmapArgs): Promise<HeatmapResponse> {
+  const t0 = Date.now();
+
+  // --- validate inputs as you already do ---
+  validateUrl(params.url);
+  const device = sanitizeDevice(params.device);
+  let viewport = VIEWPORTS[device];                 // default; may be overwritten below
+  const dataPoints = sanitizeDataPoints(params.dataPoints);
+
+  // --- obtain a REAL screenshot (prefer Puppeteer) ---
+  let screenshotBase64: string;
+
+  try {
+    // 1) Robust internal screenshot (same as AI path)
+    const { png, viewport: actualVp } = await getScreenshotBuffer(params.url, device);
+    if (!png || png.length < MIN_PNG_BYTES) throw new Error("tiny_png_from_robust_path");
+    if (actualVp) viewport = actualVp;              // use real image dimensions if provided
+    screenshotBase64 = `data:image/png;base64,${png.toString("base64")}`;
+  } catch (robustErr) {
+    // 2) Fallback to external provider
+    const { image } = await getExternalScreenshotBase64(params.url, device);
+    const raw = (image || "").replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, "");
+    const buf = Buffer.from(raw, "base64");
+    if (!buf || buf.length < MIN_PNG_BYTES) {
+      // ❌ Do NOT render heat on a dummy/black background — fail clearly
+      const msg = (robustErr && robustErr.message) ? robustErr.message : "unknown";
+      throw new Error(`SCREENSHOT_PROVIDER_FAILED (robust=${msg})`);
+    }
+    screenshotBase64 = image;
+  }
+
+  // --- composite: screenshot first, heat overlay second ---
+  const base64 = renderDataHeatmapToCanvas(screenshotBase64, dataPoints, viewport);
+
+  return {
+    base64,
+    meta: {
+      phase: "phase10",
+      engine: "data",
+      device,
+      viewport,
+      sourceUrl: params.url,
+      durationMs: Date.now() - t0,
+      timestamp: new Date().toISOString(),
+    },
+  };
+}
+```
+
+**Notes**
+
+* Keep your existing helpers (`validateUrl`, `sanitizeDevice`, `sanitizeDataPoints`, `VIEWPORTS`, `renderDataHeatmapToCanvas`).
+* `getScreenshotBuffer(url, device)` is the same helper used by the **AI path**; it launches Puppeteer and returns `{ png: Buffer, viewport?: {width,height} }`.
+* We **never** accept sub-`MIN_PNG_BYTES` images — those are almost always dummy/1×1 PNGs.
+
+---
+
+## 2) Patch the **data controller** to surface a clear 502
+
+> If your controller currently swallows provider failures and still returns 200 with a tiny image, change it to **map** the thrown error to **HTTP 502**.
+
+**Find** (or similar):
+
+```ts
+// server/controllers/heatmap.data.ts
+export async function postHeatmapData(req, res) {
+  try {
+    const resp = await generateDataHeatmap(req.body);
+    return res.json(resp); // currently always 200
+  } catch (e) {
+    // maybe returns 500 or hides the error
+    return res.status(500).json({ error: "server-failure", reqId });
+  }
+}
+```
+
+**Replace catch with**:
+
+```ts
+} catch (e: any) {
+  const msg = (e && e.message) ? e.message : "unknown";
+  const isScreenshotFail = /SCREENSHOT_PROVIDER_FAILED/i.test(msg) || /tiny_png/i.test(msg);
+
+  const status = isScreenshotFail ? 502 : 500;
+  return res.status(status).json({
+    error: isScreenshotFail ? "screenshot_failed" : "server_failure",
+    details: msg,
+    reqId: res.locals?.reqId || undefined
+  });
+}
+```
+
+**Why:** if both robust + external providers fail, **do not** return a bogus black image — fail with **502** so callers can retry/backoff.
+
+---
+
+## 3) (Optional) Respect `withScreenshot` but default to **true**
+
+If your request body supports a `withScreenshot` flag, you can honor it while keeping the **secure default**:
+
+```ts
+const withScreenshot = (params.withScreenshot !== false); // default true
+if (!withScreenshot) {
+  // fallback to a neutral light grey background instead of black,
+  // OR keep current behavior — but recommend leaving default true.
+}
+```
+
+---
+
+## 4) Quick validation steps (use your existing tools)
+
+1. **Restart the server** (clean build if you transpile).
+2. Run the **desktop-only** PowerShell smoketest that opens a PNG (the one we made: `smoketest-open.ps1`).
+
+   * Expect: image size >> 8 KB (often >100 KB) and **real page background** + heat overlay.
+3. Try a **bad URL** to confirm you get a **502 screenshot\_failed** instead of a black image.
+4. Try the **AI path** (`/api/v1/heatmap`) to confirm unchanged behavior.
+
+---
+
+## 5) Rollback plan
+
+The change is localized to:
+
+* `server/services/heatmap.ts` (data path only)
+* `server/controllers/heatmap.data.ts` (error mapping only)
+
+If anything misbehaves, revert those two hunks.
+
+---
+
+### One-liner summary (for commit message)
+
+> **fix(data-heatmap):** use robust Puppeteer screenshot (getScreenshotBuffer) with external fallback, sanity-check PNG size, and return 502 on provider failure instead of compositing on a dummy background.
+
+---
+
+Paste this brief to your AI assistant as-is. If it needs full file rewrites instead of patches, tell me the exact filenames/exports and I’ll output complete files.

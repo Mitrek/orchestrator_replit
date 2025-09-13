@@ -1,0 +1,107 @@
+Here’s **Step 1 of 3** for Phase 5—written as precise, copy-pastable instructions to your Replit AI assistant. (No code yet—just exact actions.)
+
+---
+
+# Phase 5 — Step 1: Data endpoint skeleton + screenshot passthrough (no heat layer yet)
+
+**Goal:** Add a new API that accepts normalized points (0..1), validates input, takes a device-specific screenshot, and returns it as base64. This proves the data flow and device handling before we draw any heat.
+
+## Instructions for Replit AI assistant
+
+1. **Confirm project name & structure**
+
+* Project root is **cimple**.
+* We’ll put heatmap HTTP handlers under `server/controllers/` and services under `server/services/`.
+* Static files served from `public/` (ensure the folder exists).
+
+2. **Feature flag & health**
+
+* Ensure there is a boolean env or constant (e.g., `HEATMAP_ENABLED=true`) surfaced in any existing `/health` route. If not present, add it.
+* Health route should return `{ heatmapEnabled: true }` so we can quickly see if the feature is on.
+
+3. **Schema (reuse if present)**
+
+* If `server/schemas/heatmap.ts` already defines a schema for data heatmaps, **use it** (look for something like `heatmapDataRequestSchema`).
+* If not, create a Zod schema named `heatmapDataRequestSchema` with:
+
+  * `url: string().url()`
+  * `device: enum(["desktop","tablet","mobile"]).default("desktop")`
+  * `returnMode: enum(["base64","url"]).default("base64")`
+  * `dataPoints: array( object({ x:number, y:number }).refine(0≤x≤1 & 0≤y≤1) ).min(1).max(5000)`
+  * Optional knobs (accept but ignore for now): `alpha? number`, `radiusPx? number`, `blurPx? number`
+
+4. **Route**
+
+* In `server/routes.ts`, register a new POST route: **`/api/v1/heatmap/data`**.
+* Apply the same rate-limiting middleware used on other API routes (if you have one).
+* The route must:
+
+  * Parse body as JSON.
+  * Validate with `heatmapDataRequestSchema`.
+  * On validation error → 400 with a readable message.
+  * On success → forward to a new controller (next step).
+
+5. **Controller**
+
+* Create `server/controllers/heatmap.data.ts` exporting `postHeatmapData`.
+* Controller responsibilities (for now):
+
+  * Destructure `{ url, device, returnMode, dataPoints }`.
+  * **Do not** render the heat layer yet.
+  * Fetch a device-specific screenshot and return it untouched as base64 (see Service below).
+  * Response shape (stabilize this now):
+
+    ```json
+    {
+      "image": "data:image/png;base64,...", 
+      "meta": {
+        "sourceUrl": "<url>",
+        "device": "<desktop|tablet|mobile>",
+        "countPoints": <int>,
+        "returnMode": "<base64|url>",
+        "phase": "phase5.step1"
+      }
+    }
+    ```
+  * If screenshot fails (timeout/provider error), return **502** with `{ error: "screenshot_failed", provider, details }`.
+
+6. **Screenshot service (use existing if present)**
+
+* If available, use your existing **external screenshot service** (e.g., `server/services/screenshotExternal.ts`) and call something like `getExternalScreenshotBase64(url, device)`.
+* If it does not exist, create a minimal service placeholder that returns a known, valid PNG base64 from a fixed provider (no puppeteer yet in this step).
+* Ensure the returned string is **already** prefixed with `data:image/png;base64,`.
+
+7. **Static directory**
+
+* Ensure `public/` exists. You don’t need to write files in this step, but we’ll use it in Steps 2–3.
+* Confirm the static mount (e.g., `app.use("/heatmaps", express.static(path.join(__dirname, "..", "public", "heatmaps")))`) exists or add it now (creating the folder if missing), even if unused yet.
+
+8. **Logging**
+
+* Add structured logs at the start/end of the controller with: `{ route:"/api/v1/heatmap/data", device, points: dataPoints.length, phase:"step1" }`.
+* Log provider/latency for the screenshot function.
+
+9. **Acceptance tests (you can run via Replit HTTP client or curl)**
+
+* **Happy path:** POST `/api/v1/heatmap/data` with:
+
+  * `url: "https://www.acquisition.com/"`
+  * `device: "desktop"`
+  * `returnMode: "base64"`
+  * `dataPoints: [{ "x":0.5, "y":0.5 }]`
+  * Expect 200 with `image` starting with `data:image/png;base64,` and `meta.countPoints === 1`.
+* **Device mapping:** Repeat with `tablet` and `mobile`. Expect valid images for both (different aspect ratios are OK).
+* **Validation error:** Send `dataPoints: []` or `x: 1.5`. Expect 400 with a useful validation message.
+* **Provider error:** Temporarily break the screenshot provider URL (if configurable). Expect 502 with `{ error:"screenshot_failed", provider }`.
+
+**Definition of Done (Step 1):**
+
+* New route exists and validates input.
+* Returns a base64 screenshot with stable response shape (no heat layer yet).
+* Works for desktop/tablet/mobile.
+* Logs clearly show request, device, and provider timing.
+* Health reflects `heatmapEnabled: true`.
+
+---
+
+Reply “ready for **Step 2**” when this passes—the next step will add **normalized→pixel mapping + heat accumulation/blur buffer** (still no color ramp), so we can inspect intensity stats before final coloring/compositing.

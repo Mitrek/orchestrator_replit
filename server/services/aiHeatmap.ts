@@ -1,4 +1,3 @@
-
 import { getAiHotspotsPhase7 } from "./aiHotspots";
 import { getScreenshotBuffer } from "./screenshot";
 import { getExternalScreenshotBase64 } from "./screenshotExternal";

@@ -2,11 +2,13 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 
-// All APIs are registered in routes.ts
+// Keep only the ping route here; all other APIs are registered in routes.ts
+import { registerPingRoute } from "./routes/ping";
 // server/index.ts (very top – first imports)
 import { neonConfig } from "@neondatabase/serverless";
 import path from "path";
 import { fileURLToPath } from "url";
+import { buildHealthReport } from "./health"; // <-- added
 import fs from "fs";
 
 // Hard block any WS usage if some file tries to set it up later
@@ -26,12 +28,8 @@ app.use(express.static(path.join(process.cwd(), "public")));
 
 // ✅ /health route — lightweight readiness check
 app.get("/health", (req, res) => {
-  res.status(200).json({
-    status: "ok",
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    version: process.env.npm_package_version || "1.0.0"
-  });
+  const payload = buildHealthReport();
+  res.status(200).json(payload);
 });
 
 // Request timing + compact API response logger
@@ -66,7 +64,8 @@ app.use((req, res, next) => {
 (async () => {
   const server = await registerRoutes(app);
 
-  // Health check is handled in routes.ts
+  // Health check stays close to the entrypoint
+  registerPingRoute(app);
 
   // ✅ Safer centralized error handler: log & respond, don't crash the process
   app.use((err: any, req: Request, res: Response, next: NextFunction) => {

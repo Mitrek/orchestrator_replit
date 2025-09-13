@@ -1,18 +1,8 @@
 
 import { Request, Response } from "express";
-
-// Simple inline metrics implementation
-const metrics = {
-  getMetrics: () => ({}),
-  getUptimeSeconds: () => Math.floor(process.uptime())
-};
-
-// Simple error types
-const ERROR_TYPES = {
-  VALIDATION_ERROR: "validation_error",
-  NOT_FOUND: "not_found",
-  INTERNAL_ERROR: "internal_error"
-};
+import { metrics } from "./metrics";
+import { getCacheStats } from "./services/hotspotsCache";
+import { ERROR_TYPES } from "./logger";
 
 // Recent errors storage (ring buffer)
 interface RecentError {
@@ -38,6 +28,7 @@ export async function handleDiagnostics(req: Request, res: Response): Promise<vo
   try {
     const runQA = req.query.qa === "1";
     const routeMetrics = metrics.getMetrics();
+    const cacheStats = getCacheStats();
 
     // Provider health checks
     const screenshotProvider = await checkScreenshotProvider();
@@ -59,7 +50,8 @@ export async function handleDiagnostics(req: Request, res: Response): Promise<vo
         providerConfigured: isProviderConfigured()
       },
       metrics: {
-        routes: routeMetrics
+        routes: routeMetrics,
+        cache: cacheStats
       },
       providers: {
         screenshot: screenshotProvider,

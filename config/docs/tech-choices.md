@@ -1,0 +1,11 @@
+--no-sandbox
+--disable-setuid-sandbox
+--disable-dev-shm-usage
+--disable-gpu
+--disable-extensions
+--disable-web-security
+--no-first-run
+--no-default-browser-check
+--disable-background-timer-throttling
+--disable-renderer-backgrounding
+--disable-backgrounding-occluded-windows

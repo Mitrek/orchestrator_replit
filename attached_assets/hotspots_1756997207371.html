@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Heatmap Levels (L1=no orange/red, L2=orange only, L3=full)</title>
+<style>
+  html,body{height:100%;margin:0;background:#000;display:grid;place-items:center}
+  canvas{display:block;box-shadow:0 10px 40px rgba(0,0,0,.6)}
+</style>
+</head>
+<body>
+<canvas id="heatmap" width="1000" height="560"></canvas>
+<script>
+// =================== KNOBS ===================
+const W = 1000, H = 560;
+const CENTER_BAND = 0.48, BAND_HEIGHT = 0.36;
+const FIXATIONS = 120, STREAKS = 22, STREAK_STEPS = 20;
+const STREAK_SPREAD = 24, JITTER = 26, HSCAN_PULL = 0.25;
+const BASE_GAMMA = 0.65, BORDER_FADE = 0.55, NOISE = 0.10;
+
+// 1=yellow-only, 2=orange-only, 3=full (white-hot)
+const HOTSPOT_LEVEL = 3; // <<< set to 1, 2, or 3
+
+// Pinned hottest spot (your AI top point)
+const HOTTEST_X = W/2, HOTTEST_Y = H/2;
+const HOTTEST_SIGMA_X = 95, HOTTEST_SIGMA_Y = 62, HOTTEST_TILT = 0.10;
+const EXCLUDE_R_FOR_PCTL = 120;
+// ===================================================
+
+const cv = document.getElementById('heatmap');
+const ctx = cv.getContext('2d');
+cv.width=W; cv.height=H;
+ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
+
+const heat = new Float32Array(W*H);
+let maxVal = 0;
+
+const rnd=Math.random;
+const r=(a,b)=>a+(b-a)*rnd();
+const clamp=(x,a,b)=>x<a?a:(x>b?b:x);
+
+function sampleBandXY(){
+  const yC=H*CENTER_BAND;
+  const y=yC + r(-BAND_HEIGHT*H/2, BAND_HEIGHT*H/2) + r(-JITTER,JITTER);
+  const x=r(W*0.12, W*0.88);
+  return [clamp(x,0,W-1), clamp(y,0,H-1)];
+}
+
+// Rotated, anisotropic Gaussian
+function addAnisoHotspot(x,y, amp, sx, sy, theta){
+  const rBox = Math.ceil(3*Math.max(sx,sy));
+  const x0=Math.max(0,Math.floor(x-rBox)), y0=Math.max(0,Math.floor(y-rBox));
+  const x1=Math.min(W-1,Math.ceil(x+rBox)), y1=Math.min(H-1,Math.ceil(y+rBox));
+  const ct=Math.cos(theta), st=Math.sin(theta);
+  const inv2sx2=1/(2*sx*sx), inv2sy2=1/(2*sy*sy);
+  for(let j=y0;j<=y1;j++){
+    const dy=j-y;
+    for(let i=x0;i<=x1;i++){
+      const dx=i-x;
+      const xr= dx*ct + dy*st;
+      const yr=-dx*st + dy*ct;
+      const v = amp * Math.exp(-(xr*xr)*inv2sx2 - (yr*yr)*inv2sy2);
+      const idx=j*W+i;
+      heat[idx]+=v; if(heat[idx]>maxVal) maxVal=heat[idx];
+    }
+  }
+}
+
+// --- Background: fixations + streaks ---
+for (let k=0;k<FIXATIONS;k++){
+  const [x,y]=sampleBandXY();
+  addAnisoHotspot(x,y, r(0.35,0.9),
+                  r(18,90)*(1+HSCAN_PULL*r(0,1)),
+                  r(12,55)*(0.6+0.4*r(0,1)),
+                  r(-Math.PI/6,Math.PI/6)+r(-0.2,0.2));
+}
+for(let s=0;s<STREAKS;s++){
+  let [x,y]=sampleBandXY();
+  let angle=r(-0.35,0.35)+(rnd()<0.5?0:Math.PI)+r(-0.25,0.25);
+  for(let t=0;t<STREAK_STEPS;t++){
+    addAnisoHotspot(x,y, r(0.25,0.8)*(1 - t/STREAK_STEPS*0.6),
+                    r(28,95), r(10,26), angle);
+    x+=Math.cos(angle)*STREAK_SPREAD + r(-12,12);
+    y+=Math.sin(angle)*STREAK_SPREAD + r(-10,10);
+    angle+=r(-0.20,0.20);
+    if(x<20||x>W-20||y<20||y>H-20) break;
+  }
+}
+
+// Speckle
+if (NOISE>0){
+  for (let i=0;i<heat.length;i++){
+    heat[i]+=NOISE*(rnd()*rnd())*0.2;
+    if(heat[i]>maxVal) maxVal=heat[i];
+  }
+}
+
+// ---------- Percentile helper ----------
+function percentileExcludingTarget(p){
+  const vals=[];
+  const r2 = EXCLUDE_R_FOR_PCTL*EXCLUDE_R_FOR_PCTL;
+  for (let y=0;y<H;y++){
+    const dy=y-HOTTEST_Y;
+    for (let x=0;x<W;x++){
+      const dx=x-HOTTEST_X;
+      if (dx*dx+dy*dy <= r2) continue;
+      vals.push(heat[y*W+x]);
+    }
+  }
+  vals.sort((a,b)=>a-b);
+  const i = Math.floor(vals.length * p);
+  return vals[Math.max(0, Math.min(vals.length-1, i))] || 1e-6;
+}
+
+// ---------- Per-level scaling + palette caps ----------
+let pctl, backgroundTarget, hotspotPeak, gamma = BASE_GAMMA, alpha = 0.92, palette = 3;
+
+// L1: NO orange/red (caps at yellow)
+if (HOTSPOT_LEVEL === 1){
+  pctl = 0.97;  backgroundTarget = 0.70; hotspotPeak = 0.78;
+  gamma = 0.75; alpha = 0.92; palette = 1;
+}
+// L2: allow up to ORANGE only (no red/white) + dimmer
+else if (HOTSPOT_LEVEL === 2){
+  pctl = 0.985; backgroundTarget = 0.74; hotspotPeak = 0.90;
+  gamma = 0.80; alpha = 0.70; palette = 2;   // darker overlay + softer contrast
+}
+// L3: full palette with single white-hot peak
+else {
+  pctl = 0.99; backgroundTarget = 0.92; hotspotPeak = 1.00;
+  gamma = BASE_GAMMA; alpha = 0.92; palette = 3;
+}
+
+const pV = percentileExcludingTarget(pctl);
+const scale = backgroundTarget / (pV || 1e-6);
+for (let i=0;i<heat.length;i++) heat[i] *= scale;
+
+// Add pinned hotspot after scaling
+const idxC = (HOTTEST_Y|0)*W + (HOTTEST_X|0);
+const currentAtTarget = heat[idxC] || 0;
+const requiredAmpl = Math.max(0, hotspotPeak - currentAtTarget);
+addAnisoHotspot(HOTTEST_X, HOTTEST_Y, requiredAmpl,
+                HOTTEST_SIGMA_X, HOTTEST_SIGMA_Y, HOTTEST_TILT);
+
+// Clip + gamma
+for (let i=0;i<heat.length;i++){
+  const t = Math.pow(Math.min(1, Math.max(0, heat[i])), gamma);
+  heat[i] = t;
+}
+
+// --- Palettes enforcing color ceilings ---
+// L1: Blue→Cyan→Green→Yellow (cap at Yellow)
+// L2: Blue→Cyan→Green→Yellow→Orange (cap at Orange; NO red)
+// L3: Full (includes Red→White)
+function buildLUT(which){
+  const stops = which===1 ? [
+      [0.00,[  0,  0, 64]],
+      [0.18,[  0,  0,255]],
+      [0.36,[  0,255,255]],
+      [0.60,[  0,255,  0]],
+      [1.00,[255,255,  0]], // cap at yellow
+    ] : which===2 ? [
+      [0.00,[  0,  0, 48]],
+      [0.18,[  0,  0,200]],
+      [0.36,[  0,180,180]],
+      [0.55,[  0,200,  0]],
+      [0.80,[255,255,  0]],
+      [1.00,[255,140,  0]], // cap at orange (no reds)
+    ] : [
+      [0.00,[  0,  0, 64]],
+      [0.18,[  0,  0,255]],
+      [0.36,[  0,255,255]],
+      [0.52,[  0,255,  0]],
+      [0.68,[255,255,  0]],
+      [0.82,[255,128,  0]],
+      [0.94,[255,  0,  0]],
+      [1.00,[255,255,255]],
+    ];
+
+  const LUT=new Uint8ClampedArray(256*3);
+  function lerp(a,b,t){return a+(b-a)*t}
+  for(let i=0;i<256;i++){
+    const t=i/255; let s=0; while(s<stops.length-1 && t>stops[s+1][0]) s++;
+    const [t0,c0]=stops[s], [t1,c1]=stops[Math.min(s+1,stops.length-1)];
+    const u=(t1===t0)?0:(t-t0)/(t1-t0);
+    LUT[i*3+0]=Math.round(lerp(c0[0],c1[0],u));
+    LUT[i*3+1]=Math.round(lerp(c0[1],c1[1],u));
+    LUT[i*3+2]=Math.round(lerp(c0[2],c1[2],u));
+  }
+  return LUT;
+}
+const LUT = buildLUT(palette);
+
+// --- Draw ---
+const img=ctx.createImageData(W,H), px=img.data;
+for(let i=0,p=0;i<heat.length;i++){
+  const c=Math.min(255,(heat[i]*255)|0);
+  px[p++]=LUT[c*3+0]; px[p++]=LUT[c*3+1]; px[p++]=LUT[c*3+2];
+  px[p++]=Math.floor(alpha*255);
+}
+ctx.putImageData(img,0,0);
+
+// Vignette
+const g=ctx.createRadialGradient(W/2,H*CENTER_BAND,Math.min(W,H)*0.15,
+                                 W/2,H*CENTER_BAND,Math.max(W,H)*0.75);
+g.addColorStop(0,'rgba(0,0,0,0)');
+g.addColorStop(1,`rgba(0,0,0,${BORDER_FADE})`);
+ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+</script>
+</body>
+</html>

@@ -1,0 +1,86 @@
+Here’s a clean **prompt for the Replit AI assistant** to implement **Phase 9 – Step 2**.
+It builds directly on your **Phase 8 server (green)** and introduces guarded static serving + QA markers, but no UI logic yet.
+
+---
+
+# Prompt for Replit AI Assistant
+
+We are at **Phase 9 – Step 2** of our heatmap project. The server is currently stable at the end of Phase 8.
+
+Your task: **add guarded static serving of the client build + embed QA markers**, but do not implement the React Dev UI yet.
+
+## Step 2 Implementation Tasks
+
+### 1. Guarded static serving
+
+* Edit `server/index.ts`.
+* After registering all API routes:
+
+  * Import `path` and `fs`.
+  * Check if `client/dist` exists.
+  * If yes:
+
+    * `app.use(express.static(clientDist))`
+    * Add a GET route for `/dev/heatmap` that serves `client/dist/index.html`.
+  * If no:
+
+    * Log a safe warning like:
+
+      ```ts
+      console.warn("[Phase9] client/dist not found; /dev/heatmap will 404 (safe).");
+      ```
+* This must **never crash the server** if the client hasn’t been built.
+
+### 2. Add QA markers (for smoketests)
+
+* Edit `client/index.html`.
+* Before `</body>`, insert a hidden div with static text markers:
+
+  ```html
+  <!-- QA markers -->
+  <div id="qa-markers" style="display:none">
+    AI Heatmap — /api/v1/heatmap
+    Data Heatmap — /api/v1/heatmap/data
+  </div>
+  ```
+* These will be searched by smoke tests to confirm the dev shell is served.
+
+### 3. Build step
+
+* Ensure the client builds without errors:
+
+  ```bash
+  npm --prefix client run build
+  ```
+* Confirm the output goes to `client/dist`.
+
+---
+
+## Success Criteria
+
+* Server still boots normally (`/health` returns `ok`).
+* Hitting `/dev/heatmap` returns `index.html` if `client/dist` exists.
+* That HTML contains both marker strings:
+
+  * `AI Heatmap — /api/v1/heatmap`
+  * `Data Heatmap — /api/v1/heatmap/data`
+* If `client/dist` does not exist, `/dev/heatmap` should respond 404 but **server must not crash**.
+* No new dependencies are added.
+* No changes to API routes or base64 contract.
+
+---
+
+After this, I’ll run a smoke test that checks:
+
+* `/health`
+* `/dev/heatmap` with markers
+* `/api/v1/heatmap` still returns base64
+* `/api/v1/heatmap/data` still returns base64
+
+---
+
+👉 Please implement **Step 2** exactly as described above. Do not jump ahead to Step 3 (Dev UI React page).
+
+---
+
+Would you like me to also give you the **PowerShell smoke test for Step 2** right now, so you can run it immediately after the assistant finishes?

@@ -22,13 +22,7 @@ import {
 import { db, withDbRetry } from "./db";
 import { eq } from "drizzle-orm";
 
-import { apiKeyAuth } from "./middleware/apiKeyAuth";
 import { perIpLimiter, requestTimeout } from "./middleware/limits";
-import { makeDummyPngBase64 } from "./services/imaging";
-import { postHeatmapScreenshot } from "./controllers/heatmap.screenshot";
-import { postHeatmap } from "./controllers/heatmap";
-import { diagPuppeteerLaunch } from "./controllers/puppeteer.diagnostics";
-import { postHeatmapData } from "./controllers/heatmap.data";
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 
@@ -66,62 +60,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Add request tracing middleware
   app.use(requestTracingMiddleware);
   app.use(addReqIdToResponse);
-  // ------------------------- Auth (email/password) ---------------------------
-  app.post("/api/auth/register", apiLimiter, async (req, res) => {
-    try {
-      const validatedData = registerSchema.parse(req.body);
-      const { confirmPassword, ...userData } = validatedData;
-
-      const existingUser = await storage.getUserByEmail(userData.email);
-      if (existingUser) {
-        return res.status(400).json({ error: "User already exists" });
-      }
-
-      const hashedPassword = await bcrypt.hash(userData.password, 10);
-      const user = await storage.createUser({
-        ...userData,
-        password: hashedPassword,
-      });
-
-      const token = jwt.sign(
-        { userId: user.id, email: user.email },
-        JWT_SECRET,
-        {
-          expiresIn: "24h",
-        },
-      );
-
-      const { password, ...userWithoutPassword } = user;
-      res.json({ user: userWithoutPassword, token });
-    } catch (error: any) {
-      res.status(400).json({ error: error.message });
-    }
-  });
-
-  app.post("/api/auth/login", apiLimiter, async (req, res) => {
-    try {
-      const { email, password } = loginSchema.parse(req.body);
-      const user = await storage.getUserByEmail(email);
-      if (!user) return res.status(401).json({ error: "Invalid credentials" });
-
-      const isValidPassword = await bcrypt.compare(password, user.password);
-      if (!isValidPassword)
-        return res.status(401).json({ error: "Invalid credentials" });
-
-      const token = jwt.sign(
-        { userId: user.id, email: user.email },
-        JWT_SECRET,
-        {
-          expiresIn: "24h",
-        },
-      );
-
-      const { password: _, ...userWithoutPassword } = user;
-      res.json({ user: userWithoutPassword, token });
-    } catch (error: any) {
-      res.status(400).json({ error: error.message });
-    }
-  });
 
   // ------------------------- Heatmap (API) -------------------------
   // AI-assisted heatmap endpoint
@@ -130,41 +68,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     perIpLimiter,
     requestTimeout(45_000),
     async (req, res) => {
+      const reqId = res.locals?.reqId || `hmAI_${Date.now()}`;
       try {
-        const { 
-          url, 
-          device = "desktop", 
-          engine,
-          parity = process.env.PARITY_MODE !== "false",
-          knobs 
-        } = req.body;
+        const { url, device = "desktop" } = req.body;
         
         if (!url || typeof url !== 'string') {
           return res.status(400).json({ error: "URL is required" });
         }
 
-        // Check for legacy engine and reject
-        if (engine === "legacy") {
-          return res.status(400).json({ error: "legacy engine is disabled" });
-        }
-
-        // Import validation helpers
-        const { ALLOWED_DEVICES } = await import("./services/validation");
-        
-        if (!ALLOWED_DEVICES.includes(device as any)) {
-          return res.status(400).json({ 
-            error: "Invalid device", 
-            allowed: ALLOWED_DEVICES 
-          });
-        }
-
-        const { makeAiHeatmapImage } = await import("./services/aiHeatmap");
-        const result = await makeAiHeatmapImage({ 
-          url, 
-          device, 
-          parity,
-          knobs 
-        });
+        const { generateHeatmap } = await import("./services/heatmap");
+        const result = await generateHeatmap({ url, device, reqId });
         
         return res.json(result);
       } catch (error: any) {
@@ -172,7 +85,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         return res.status(500).json({ 
           error: "INTERNAL_ERROR", 
-          details: error?.message?.includes("screenshot") ? "screenshot provider failed" : "internal error"
+          details: error?.message,
+          reqId 
         });
       }
     }
@@ -184,6 +98,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     perIpLimiter,
     requestTimeout(45_000),
     async (req, res) => {
+      const reqId = res.locals?.reqId || `hmData_${Date.now()}`;
       try {
         const { url, device, dataPoints } = req.body;
         
@@ -196,7 +111,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         const { generateDataHeatmap } = await import("./services/heatmap");
-        const result = await generateDataHeatmap({ url, device, dataPoints });
+        const result = await generateDataHeatmap({ url, device, dataPoints, reqId });
         
         return res.json(result);
       } catch (error: any) {
@@ -209,179 +124,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   );
 
-  app.get("/api/v1/heatmap/dummy", (_req, res) => {
-    res.json({ image: makeDummyPngBase64() });
-  });
 
-  // Hotspots JSON API
-  app.post("/api/v1/heatmap/hotspots", async (req, res) => {
-    const startTime = Date.now();
 
-    try {
-      const { url, device = "desktop", engine, parity = true } = req.body;
 
-      // Import validation helpers
-      const { ALLOWED_DEVICES, DEVICE_MAP } = await import("./services/validation");
-
-      // Validate URL
-      if (!url || typeof url !== "string") {
-        return res.status(400).json({ error: "URL is required" });
-      }
-
-      // Validate device
-      if (!ALLOWED_DEVICES.includes(device as any)) {
-        return res.status(400).json({ 
-          error: "Invalid device", 
-          allowed: ALLOWED_DEVICES 
-        });
-      }
-
-      // Determine engine
-      const selectedEngine = engine || process.env.AI_ENGINE || "phase7";
-
-      let result;
-      if (selectedEngine === "legacy") {
-        const { getAiHotspotsLegacy } = await import("./services/aiHotspots.legacy");
-        result = await getAiHotspotsLegacy({ url, device, parity });
-      } else {
-        const { getAiHotspotsPhase7 } = await import("./services/aiHotspots");
-        result = await getAiHotspotsPhase7({ url, device, parity });
-      }
-
-      // Re-sanitize (belt & suspenders)
-      const { clampAndValidateHotspots, greedyDeoverlap } = await import("./services/validation");
-      const { kept } = clampAndValidateHotspots(result.hotspots);
-      let filtered = kept;
-      if (parity) {
-        filtered = kept.filter(h => h.confidence >= 0.25);
-      }
-      const finalHotspots = greedyDeoverlap(filtered, { max: 8, iouThreshold: 0.4 });
-
-      const durationMs = Date.now() - startTime;
-      const viewport = DEVICE_MAP[device];
-
-      // Log structured line
-      console.log(JSON.stringify({
-        route: "/api/v1/heatmap/hotspots",
-        url,
-        device,
-        engine: selectedEngine,
-        parity,
-        durationMs,
-        accepted: finalHotspots.length,
-        pruned: result.hotspots.length - finalHotspots.length,
-        fallback: result.meta.fallback || false
-      }));
-
-      res.json({
-        hotspots: finalHotspots,
-        meta: {
-          phase: "phase7",
-          engine: "ai",
-          device,
-          viewport,
-          ai: {
-            engine: result.meta.engine,
-            model: result.meta.engine === "legacy" ? "legacy" : result.meta.model,
-            fallback: result.meta.fallback || false,
-            promptHash: result.meta.promptHash || undefined,
-            checksumOk: result.meta.checksumOk || undefined,
-            requested: result.meta.requested,
-            accepted: finalHotspots.length,
-            pruned: result.meta.requested - finalHotspots.length,
-            parity
-          },
-          timestamp: new Date().toISOString(),
-          durationMs
-        }
-      });
-
-    } catch (error: any) {
-      console.error("[/api/v1/heatmap/hotspots] error:", error);
-      
-      if (error.message?.includes("checksum mismatch")) {
-        return res.status(500).json({ error: error.message });
-      }
-
-      return res.status(500).json({ 
-        error: "Failed to generate hotspots", 
-        details: error?.message 
-      });
-    }
-  });
-
-  // Puppeteer diagnostics
-  app.get("/api/v1/puppeteer/launch", diagPuppeteerLaunch);
-
-  // System diagnostics
-  app.get("/api/v1/heatmap/diagnostics", async (req, res) => {
-    const { handleDiagnostics } = await import("./diagnostics");
-    await handleDiagnostics(req, res);
-  });
-
-  // QA golden generation (admin only)
-  app.post("/api/v1/qa/generate-goldens", async (req, res) => {
-    try {
-      const { generateGoldenImages } = await import("./qa");
-      await generateGoldenImages();
-      res.json({ success: true, message: "Golden images generated" });
-    } catch (error: any) {
-      res.status(500).json({ error: "Failed to generate golden images", details: error.message });
-    }
-  });
-
-  // ------------------------- Subscription Checker ----------------------------
-  app.get(
-    "/api/subscription",
-    apiKeyAuth,
-    async (req, res) => {
-      try {
-        const userId = (req as any).userId as string;
-        if (!userId) return res.status(401).json({ error: "Unauthorized" });
-
-        const [row] = await withDbRetry(() =>
-          db
-            .select({
-              status: users.subscriptionStatus,
-              periodEnd: users.currentPeriodEnd,
-            })
-            .from(users)
-            .where(eq(users.id, userId))
-            .limit(1),
-        );
-
-        if (!row) return res.status(404).json({ error: "User not found" });
-
-        const now = new Date();
-        const endsAt = row.periodEnd ? new Date(row.periodEnd) : null;
-
-        if (
-          row.status === "active" &&
-          endsAt &&
-          endsAt.getTime() > now.getTime()
-        ) {
-          const diffMs = endsAt.getTime() - now.getTime();
-          const daysRemaining = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-          return res.json({ daysRemaining });
-        }
-
-        if (!endsAt) {
-          return res.json({ message: "Subscribe at ai-lure.net" });
-        }
-
-        if (endsAt.getTime() <= now.getTime() || row.status !== "active") {
-          return res.json({
-            message: "Subscription expired, renew at ai-lure.net",
-          });
-        }
-
-        return res.json({ message: "Subscribe at ai-lure.net" });
-      } catch (err) {
-        console.error("GET /api/subscription error:", err);
-        res.status(500).json({ error: "Internal server error" });
-      }
-    },
-  );
 
   // ------------------------- User/Profile (JWT) ------------------------------
   app.get("/api/user/profile", authenticateToken, async (req: any, res) => {

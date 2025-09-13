@@ -20,7 +20,6 @@ export type HealthReport = {
     openaiKeyPresent: boolean;
   };
   services: {
-    puppeteer: "unchecked" | "ok" | "failed";
     canvas: "unchecked" | "ok" | "failed";
     storage: "unchecked" | "ok" | "failed";
   };
@@ -61,7 +60,6 @@ export function buildHealthReport(): HealthReport {
       openaiKeyPresent,
     },
     services: {
-      puppeteer: "unchecked",
       canvas: "unchecked",
       storage: "unchecked",
     },
